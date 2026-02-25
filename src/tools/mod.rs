@@ -120,6 +120,8 @@ pub use hardware_board_info::HardwareBoardInfoTool;
 pub use hardware_memory_map::HardwareMemoryMapTool;
 #[cfg(feature = "hardware")]
 pub use hardware_memory_read::HardwareMemoryReadTool;
+#[cfg(feature = "channel-lark")]
+pub use feishu_doc::FeishuDocTool;
 pub use http_request::HttpRequestTool;
 pub use image_info::ImageInfoTool;
 pub use mcp_client::McpRegistry;
@@ -765,6 +767,30 @@ pub fn all_tools_with_runtime(
                     security.clone(),
                 )));
             }
+        }
+    }
+
+    // Feishu document tools (enabled when channel-lark feature is active)
+    #[cfg(feature = "channel-lark")]
+    {
+        let feishu_creds = root_config
+            .channels_config
+            .feishu
+            .as_ref()
+            .map(|fs| (fs.app_id.clone(), fs.app_secret.clone(), true))
+            .or_else(|| {
+                root_config.channels_config.lark.as_ref().map(|lk| {
+                    (lk.app_id.clone(), lk.app_secret.clone(), lk.use_feishu)
+                })
+            });
+
+        if let Some((app_id, app_secret, use_feishu)) = feishu_creds {
+            tool_arcs.push(Arc::new(FeishuDocTool::new(
+                app_id,
+                app_secret,
+                use_feishu,
+                security.clone(),
+            )));
         }
     }
 
