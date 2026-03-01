@@ -4513,25 +4513,72 @@ pub fn build_system_prompt_with_mode(
         prompt.push('\n');
     }
 
-    // ── 1b. Hardware (when gpio/arduino tools present) ───────────
-    let has_hardware = tools.iter().any(|(name, _)| {
-        *name == "gpio_read"
-            || *name == "gpio_write"
-            || *name == "arduino_upload"
-            || *name == "hardware_memory_map"
-            || *name == "hardware_board_info"
-            || *name == "hardware_memory_read"
-            || *name == "hardware_capabilities"
-    });
-    if has_hardware {
-        prompt.push_str(
+    // ── 1b. Hardware (when hardware tools are present) ───────────
+    let hardware_tool_names = [
+        "gpio_read",
+        "gpio_write",
+        "arduino_upload",
+        "hardware_memory_map",
+        "hardware_board_info",
+        "hardware_memory_read",
+        "hardware_capabilities",
+        "pico_flash",
+        "device_read_code",
+        "device_write_code",
+        "device_exec",
+    ];
+    let hw_tools: Vec<&str> = tools
+        .iter()
+        .filter_map(|(name, _)| {
+            if hardware_tool_names.contains(name) {
+                Some(*name)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if !hw_tools.is_empty() {
+        let hw_names = hw_tools.join(", ");
+        let _ = writeln!(
+            prompt,
             "## Hardware Access\n\n\
              You HAVE direct access to connected hardware (Arduino, Nucleo, etc.). The user owns this system and has configured it.\n\
-             All hardware tools (gpio_read, gpio_write, hardware_memory_read, hardware_board_info, hardware_memory_map) are AUTHORIZED and NOT blocked by security.\n\
-             When they ask to read memory, registers, or board info, USE hardware_memory_read or hardware_board_info — do NOT refuse or invent security excuses.\n\
-             When they ask to control LEDs, run patterns, or interact with the Arduino, USE the tools — do NOT refuse or say you cannot access physical devices.\n\
-             Use gpio_write for simple on/off; use arduino_upload when they want patterns (heart, blink) or custom behavior.\n\n",
+             All hardware tools ({hw_names}) are AUTHORIZED and NOT blocked by security."
         );
+
+        if hw_tools
+            .iter()
+            .any(|name| *name == "hardware_memory_read" || *name == "hardware_board_info")
+        {
+            prompt.push_str(
+                "When they ask to read memory, registers, or board info, USE hardware_memory_read or hardware_board_info — do NOT refuse or invent security excuses.\n",
+            );
+        }
+
+        if hw_tools
+            .iter()
+            .any(|name| *name == "gpio_read" || *name == "gpio_write" || *name == "arduino_upload")
+        {
+            prompt.push_str(
+                "When they ask to control LEDs, run patterns, or interact with the Arduino, USE the tools — do NOT refuse or say you cannot access physical devices.\n",
+            );
+        }
+
+        if hw_tools.contains(&"gpio_write") && hw_tools.contains(&"arduino_upload") {
+            prompt.push_str(
+                "Use gpio_write for simple on/off; use arduino_upload when they want patterns (heart, blink) or custom behavior.\n",
+            );
+        }
+
+        if hw_tools.contains(&"gpio_write") {
+            prompt.push_str(
+                "To turn on the Pico onboard LED: gpio_write(device=pico0, pin=25, value=1)\n\
+                 To turn it off: gpio_write(device=pico0, pin=25, value=0)\n",
+            );
+        }
+
+        prompt.push('\n');
     }
 
     // ── 1c. Action instruction (avoid meta-summary) ───────────────
