@@ -7744,7 +7744,8 @@ impl Config {
                 path = %config.config_path.display(),
                 workspace = %config.workspace_dir.display(),
                 source = resolution_source.as_str(),
-                initialized = false,
+                initialized = true,
+                created = false,
                 "Config loaded"
             );
             Ok(config)
@@ -7768,6 +7769,7 @@ impl Config {
                 workspace = %config.workspace_dir.display(),
                 source = resolution_source.as_str(),
                 initialized = true,
+                created = true,
                 "Config loaded"
             );
             Ok(config)
