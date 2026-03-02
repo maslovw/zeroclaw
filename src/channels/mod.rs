@@ -403,6 +403,38 @@ fn interruption_scope_key(msg: &traits::ChannelMessage) -> String {
     format!("{}_{}_{}", msg.channel, msg.reply_target, msg.sender)
 }
 
+fn should_prefix_sender_identity(msg: &traits::ChannelMessage) -> bool {
+    if msg.channel != "telegram" {
+        return false;
+    }
+
+    let chat_id = msg
+        .reply_target
+        .split_once(':')
+        .map_or(msg.reply_target.as_str(), |(chat_id, _)| chat_id);
+
+    // Telegram supergroups/groups use negative chat IDs.
+    chat_id.starts_with('-')
+}
+
+fn llm_user_content_with_sender_identity(msg: &traits::ChannelMessage, content: &str) -> String {
+    if !should_prefix_sender_identity(msg) {
+        return content.to_string();
+    }
+
+    let sender = msg.sender.trim();
+    if sender.is_empty() {
+        return content.to_string();
+    }
+
+    let prefix = format!("[sender: {sender}]");
+    if content.trim_start().starts_with(prefix.as_str()) {
+        return content.to_string();
+    }
+
+    format!("{prefix} {content}")
+}
+
 /// Strip tool-call XML tags from outgoing messages.
 ///
 /// LLM responses may contain `<function_calls>`, `<function_call>`,
@@ -3598,7 +3630,8 @@ or tune thresholds in config.",
     // Inject per-message timestamp so the LLM always knows the current time,
     // even in multi-turn conversations where the system prompt may be stale.
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %Z");
-    let timestamped_content = format!("[{now}] {}", msg.content);
+    let llm_user_content = llm_user_content_with_sender_identity(&msg, &msg.content);
+    let timestamped_content = format!("[{now}] {llm_user_content}");
     let persisted_user_content = msg.content.clone();
 
     // Preserve user turn before the LLM call so interrupted requests keep context.
@@ -11185,6 +11218,54 @@ BTC is currently around $65,000 based on latest tool output."#
             conversation_history_key(&msg1),
             conversation_history_key(&msg2)
         );
+    }
+
+    #[test]
+    fn telegram_group_messages_prefix_sender_identity_for_llm() {
+        let msg = traits::ChannelMessage {
+            id: "msg_1".into(),
+            sender: "Kozimum".into(),
+            reply_target: "-100200300".into(),
+            content: "who am i?".into(),
+            channel: "telegram".into(),
+            timestamp: 1,
+            thread_ts: None,
+        };
+
+        let enriched = llm_user_content_with_sender_identity(&msg, &msg.content);
+        assert_eq!(enriched, "[sender: Kozimum] who am i?");
+    }
+
+    #[test]
+    fn telegram_dm_messages_do_not_prefix_sender_identity() {
+        let msg = traits::ChannelMessage {
+            id: "msg_1".into(),
+            sender: "Kozimum".into(),
+            reply_target: "12345".into(),
+            content: "who am i?".into(),
+            channel: "telegram".into(),
+            timestamp: 1,
+            thread_ts: None,
+        };
+
+        let enriched = llm_user_content_with_sender_identity(&msg, &msg.content);
+        assert_eq!(enriched, "who am i?");
+    }
+
+    #[test]
+    fn telegram_group_thread_messages_prefix_sender_identity_for_llm() {
+        let msg = traits::ChannelMessage {
+            id: "msg_1".into(),
+            sender: "Kozimum".into(),
+            reply_target: "-100200300:789".into(),
+            content: "who am i?".into(),
+            channel: "telegram".into(),
+            timestamp: 1,
+            thread_ts: Some("789".into()),
+        };
+
+        let enriched = llm_user_content_with_sender_identity(&msg, &msg.content);
+        assert_eq!(enriched, "[sender: Kozimum] who am i?");
     }
 
     #[tokio::test]
