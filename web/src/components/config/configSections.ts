@@ -640,6 +640,22 @@ export const CONFIG_SECTIONS: SectionDef[] = [
     ],
   },
 
+  // ── Napcat (OneBot) ───────────────────────────────────────────────
+  {
+    path: 'channels_config.napcat',
+    category: 'channels',
+    title: 'Napcat (OneBot)',
+    description: 'QQ via OneBot v11 (Napcat)',
+    icon: MessageCircle,
+    defaultCollapsed: true,
+    fields: [
+      { key: 'websocket_url', label: 'WebSocket URL', type: 'text', description: 'e.g. ws://127.0.0.1:3001' },
+      { key: 'api_base_url', label: 'HTTP API Base URL', type: 'text', description: 'Optional. Leave empty to auto-derive from websocket_url' },
+      { key: 'access_token', label: 'Access Token', type: 'password', sensitive: true, description: 'Optional bearer token for Napcat/OneBot API' },
+      { key: 'allowed_users', label: 'Allowed Users', type: 'tag-list', tagPlaceholder: "e.g. 10001 or '*'" },
+    ],
+  },
+
   // ── Memory ────────────────────────────────────────────────────────
   {
     path: 'memory',

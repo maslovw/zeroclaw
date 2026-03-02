@@ -1,5 +1,5 @@
 use crate::config::schema::{
-    default_nostr_relays, DingTalkConfig, IrcConfig, LarkReceiveMode, LinqConfig,
+    default_nostr_relays, DingTalkConfig, IrcConfig, LarkReceiveMode, LinqConfig, NapcatConfig,
     NextcloudTalkConfig, NostrConfig, ProgressMode, QQConfig, QQEnvironment, QQReceiveMode,
     SignalConfig, StreamMode, WhatsAppConfig,
 };
@@ -4424,6 +4424,7 @@ enum ChannelMenuChoice {
     NextcloudTalk,
     DingTalk,
     QqOfficial,
+    Napcat,
     LarkFeishu,
     Nostr,
     Done,
@@ -4443,6 +4444,7 @@ const CHANNEL_MENU_CHOICES: &[ChannelMenuChoice] = &[
     ChannelMenuChoice::NextcloudTalk,
     ChannelMenuChoice::DingTalk,
     ChannelMenuChoice::QqOfficial,
+    ChannelMenuChoice::Napcat,
     ChannelMenuChoice::LarkFeishu,
     ChannelMenuChoice::Nostr,
     ChannelMenuChoice::Done,
@@ -4567,6 +4569,14 @@ fn setup_channels() -> Result<ChannelsConfig> {
                         "✅ connected"
                     } else {
                         "— Tencent QQ Bot"
+                    }
+                ),
+                ChannelMenuChoice::Napcat => format!(
+                    "Napcat/OneBot {}",
+                    if config.napcat.is_some() {
+                        "✅ connected"
+                    } else {
+                        "— QQ via OneBot v11"
                     }
                 ),
                 ChannelMenuChoice::LarkFeishu => format!(
@@ -5872,6 +5882,62 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     receive_mode,
                     environment,
                 });
+            }
+            ChannelMenuChoice::Napcat => {
+                // ── Napcat / OneBot ──
+                println!();
+                println!(
+                    "  {} {}",
+                    style("Napcat / OneBot Setup").white().bold(),
+                    style("— QQ via OneBot v11 (Napcat)").dim()
+                );
+                print_bullet("1. Start your Napcat/OneBot gateway");
+                print_bullet("2. Enable OneBot v11 WebSocket endpoint");
+                print_bullet("3. Paste the WebSocket URL and optional token below");
+                println!();
+
+                let websocket_url: String = Input::new()
+                    .with_prompt("  WebSocket URL")
+                    .default("ws://127.0.0.1:3001".into())
+                    .interact_text()?;
+                let websocket_url = websocket_url.trim().to_string();
+                if websocket_url.is_empty() {
+                    println!("  {} Skipped", style("→").dim());
+                    continue;
+                }
+
+                let api_base_url: String = Input::new()
+                    .with_prompt("  HTTP API base URL (optional, Enter to auto-derive)")
+                    .allow_empty(true)
+                    .interact_text()?;
+
+                let access_token: String = Input::new()
+                    .with_prompt("  Access token (optional)")
+                    .allow_empty(true)
+                    .interact_text()?;
+
+                let users_str: String = Input::new()
+                    .with_prompt("  Allowed QQ user IDs (comma-separated, '*' for all)")
+                    .allow_empty(true)
+                    .interact_text()?;
+                let allowed_users: Vec<String> = users_str
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+
+                config.napcat = Some(NapcatConfig {
+                    websocket_url,
+                    api_base_url: api_base_url.trim().to_string(),
+                    access_token: if access_token.trim().is_empty() {
+                        None
+                    } else {
+                        Some(access_token.trim().to_string())
+                    },
+                    allowed_users,
+                });
+
+                println!("  {} Napcat configured", style("✅").green().bold());
             }
             ChannelMenuChoice::LarkFeishu => {
                 // ── Lark/Feishu ──
@@ -9024,14 +9090,15 @@ mod tests {
     }
 
     #[test]
-    fn channel_menu_choices_include_signal_nextcloud_and_dingtalk() {
+    fn channel_menu_choices_include_signal_nextcloud_dingtalk_and_napcat() {
         assert!(channel_menu_choices().contains(&ChannelMenuChoice::Signal));
         assert!(channel_menu_choices().contains(&ChannelMenuChoice::NextcloudTalk));
         assert!(channel_menu_choices().contains(&ChannelMenuChoice::DingTalk));
+        assert!(channel_menu_choices().contains(&ChannelMenuChoice::Napcat));
     }
 
     #[test]
-    fn launchable_channels_include_signal_mattermost_qq_nextcloud_and_dingtalk() {
+    fn launchable_channels_include_signal_mattermost_qq_nextcloud_dingtalk_and_napcat() {
         let mut channels = ChannelsConfig::default();
         assert!(!has_launchable_channels(&channels));
 
@@ -9080,6 +9147,15 @@ mod tests {
         channels.dingtalk = Some(crate::config::schema::DingTalkConfig {
             client_id: "client-id".into(),
             client_secret: "client-secret".into(),
+            allowed_users: vec!["*".into()],
+        });
+        assert!(has_launchable_channels(&channels));
+
+        channels.dingtalk = None;
+        channels.napcat = Some(crate::config::schema::NapcatConfig {
+            websocket_url: "ws://127.0.0.1:3001".into(),
+            api_base_url: String::new(),
+            access_token: None,
             allowed_users: vec!["*".into()],
         });
         assert!(has_launchable_channels(&channels));

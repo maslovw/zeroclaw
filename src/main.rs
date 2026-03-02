@@ -530,13 +530,14 @@ Examples:
         #[arg(long, value_enum, default_value_t = QuotaFormat::Text)]
         format: QuotaFormat,
     },
-    /// Manage channels (telegram, discord, slack, github)
+    /// Manage channels (telegram, discord, slack, qq, napcat, and more)
     #[command(long_about = "\
 Manage communication channels.
 
 Add, remove, list, and health-check channels that connect ZeroClaw \
 to messaging platforms. Supported channel types: telegram, discord, \
-slack, whatsapp, github, matrix, imessage, email.
+slack, mattermost, whatsapp, matrix, signal, qq, napcat, \
+lark, feishu, dingtalk, github, nextcloud, irc, imessage, email.
 
 Examples:
   zeroclaw channel list
