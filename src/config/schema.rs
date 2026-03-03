@@ -3355,9 +3355,13 @@ pub enum CommandContextRuleAction {
     Allow,
     /// Matching context is explicitly denied.
     Deny,
+    /// Matching context requires interactive approval in supervised mode.
+    ///
+    /// This does not allow a command by itself; allowlist and deny checks still apply.
+    RequireApproval,
 }
 
-/// Context-aware allow/deny rule for shell commands.
+/// Context-aware command rule for shell commands.
 ///
 /// Rules are evaluated per command segment. Command matching accepts command
 /// names (`curl`), explicit paths (`/usr/bin/curl`), and wildcard (`*`).
@@ -3366,6 +3370,8 @@ pub enum CommandContextRuleAction {
 /// - `action = "deny"`: if all constraints match, the segment is rejected.
 /// - `action = "allow"`: if at least one allow rule exists for a command,
 ///   segments must match at least one of those allow rules.
+/// - `action = "require_approval"`: matching segments require explicit
+///   `approved=true` in supervised mode, even when `shell` is auto-approved.
 ///
 /// Constraints are optional:
 /// - `allowed_domains`: require URL arguments to match these hosts/patterns.
@@ -3378,7 +3384,7 @@ pub struct CommandContextRuleConfig {
     /// Command name/path pattern (`git`, `/usr/bin/curl`, or `*`).
     pub command: String,
 
-    /// Rule action (`allow` | `deny`). Defaults to `allow`.
+    /// Rule action (`allow` | `deny` | `require_approval`). Defaults to `allow`.
     #[serde(default)]
     pub action: CommandContextRuleAction,
 
@@ -9837,6 +9843,34 @@ allowed_roots = []
         assert!(err
             .to_string()
             .contains("autonomy.command_context_rules[0].allowed_domains[0]"));
+    }
+
+    #[test]
+    async fn autonomy_command_context_rule_supports_require_approval_action() {
+        let raw = r#"
+level = "supervised"
+workspace_only = true
+allowed_commands = ["ls", "rm"]
+forbidden_paths = ["/etc"]
+max_actions_per_hour = 20
+max_cost_per_day_cents = 500
+require_approval_for_medium_risk = true
+block_high_risk_commands = true
+shell_env_passthrough = []
+auto_approve = ["shell"]
+always_ask = []
+allowed_roots = []
+
+[[command_context_rules]]
+command = "rm"
+action = "require_approval"
+"#;
+        let parsed: AutonomyConfig = toml::from_str(raw).expect("autonomy config should parse");
+        assert_eq!(parsed.command_context_rules.len(), 1);
+        assert_eq!(
+            parsed.command_context_rules[0].action,
+            CommandContextRuleAction::RequireApproval
+        );
     }
 
     #[test]
