@@ -1446,7 +1446,13 @@ main {
 
   .controls {
     width: 100%;
-    justify-content: space-between;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 0.42rem;
+  }
+
+  .palette-trigger {
+    margin-left: auto;
   }
 }
 
@@ -1457,6 +1463,12 @@ main {
 
   main {
     padding-top: 1rem;
+  }
+
+  .segmented button {
+    padding: 0.24rem 0.46rem;
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
   }
 
   .hero-inner,
