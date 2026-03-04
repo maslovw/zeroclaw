@@ -5741,6 +5741,21 @@ pub struct SecurityConfig {
     #[serde(default = "default_true")]
     pub canary_tokens: bool,
 
+    /// Enable semantic prompt-injection guard backed by vector similarity.
+    ///
+    /// This guard is additive to lexical prompt detection and only runs when
+    /// `PromptGuard` does not already block the input.
+    #[serde(default)]
+    pub semantic_guard: bool,
+
+    /// Qdrant collection used by the semantic guard.
+    #[serde(default = "default_semantic_guard_collection")]
+    pub semantic_guard_collection: String,
+
+    /// Cosine similarity threshold for semantic-guard detections.
+    #[serde(default = "default_semantic_guard_threshold")]
+    pub semantic_guard_threshold: f64,
+
     /// Shared URL access policy for network-enabled tools.
     #[serde(default)]
     pub url_access: UrlAccessConfig,
@@ -5759,9 +5774,20 @@ impl Default for SecurityConfig {
             perplexity_filter: PerplexityFilterConfig::default(),
             outbound_leak_guard: OutboundLeakGuardConfig::default(),
             canary_tokens: true,
+            semantic_guard: false,
+            semantic_guard_collection: default_semantic_guard_collection(),
+            semantic_guard_threshold: default_semantic_guard_threshold(),
             url_access: UrlAccessConfig::default(),
         }
     }
+}
+
+fn default_semantic_guard_collection() -> String {
+    "semantic_guard".into()
+}
+
+fn default_semantic_guard_threshold() -> f64 {
+    0.82
 }
 
 /// Outbound leak handling mode for channel responses.
@@ -8498,6 +8524,12 @@ impl Config {
         }
         if !(0.0..=1.0).contains(&self.security.outbound_leak_guard.sensitivity) {
             anyhow::bail!("security.outbound_leak_guard.sensitivity must be between 0.0 and 1.0");
+        }
+        if self.security.semantic_guard_collection.trim().is_empty() {
+            anyhow::bail!("security.semantic_guard_collection must not be empty");
+        }
+        if !(0.0..=1.0).contains(&self.security.semantic_guard_threshold) {
+            anyhow::bail!("security.semantic_guard_threshold must be between 0.0 and 1.0");
         }
 
         // Browser
@@ -14694,6 +14726,9 @@ default_temperature = 0.7
         );
         assert_eq!(parsed.security.outbound_leak_guard.sensitivity, 0.7);
         assert!(parsed.security.canary_tokens);
+        assert!(!parsed.security.semantic_guard);
+        assert_eq!(parsed.security.semantic_guard_collection, "semantic_guard");
+        assert!((parsed.security.semantic_guard_threshold - 0.82).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -14706,6 +14741,9 @@ default_temperature = 0.7
 
 [security]
 canary_tokens = false
+semantic_guard = true
+semantic_guard_collection = "semantic_guard_custom"
+semantic_guard_threshold = 0.91
 
 [security.otp]
 enabled = true
@@ -14789,6 +14827,12 @@ sensitivity = 0.9
         );
         assert_eq!(parsed.security.outbound_leak_guard.sensitivity, 0.9);
         assert!(!parsed.security.canary_tokens);
+        assert!(parsed.security.semantic_guard);
+        assert_eq!(
+            parsed.security.semantic_guard_collection,
+            "semantic_guard_custom"
+        );
+        assert!((parsed.security.semantic_guard_threshold - 0.91).abs() < f64::EPSILON);
         assert_eq!(parsed.security.otp.gated_actions.len(), 2);
         assert_eq!(parsed.security.otp.gated_domains.len(), 2);
         assert_eq!(
@@ -15180,6 +15224,32 @@ sensitivity = 0.9
         assert!(err
             .to_string()
             .contains("security.outbound_leak_guard.sensitivity"));
+    }
+
+    #[test]
+    async fn security_validation_rejects_empty_semantic_guard_collection() {
+        let mut config = Config::default();
+        config.security.semantic_guard_collection = "   ".to_string();
+
+        let err = config
+            .validate()
+            .expect_err("expected semantic_guard_collection validation failure");
+        assert!(err
+            .to_string()
+            .contains("security.semantic_guard_collection"));
+    }
+
+    #[test]
+    async fn security_validation_rejects_invalid_semantic_guard_threshold() {
+        let mut config = Config::default();
+        config.security.semantic_guard_threshold = 1.5;
+
+        let err = config
+            .validate()
+            .expect_err("expected semantic_guard_threshold validation failure");
+        assert!(err
+            .to_string()
+            .contains("security.semantic_guard_threshold"));
     }
 
     #[test]

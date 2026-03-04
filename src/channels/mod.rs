@@ -268,11 +268,30 @@ struct ConfigFileStamp {
 }
 
 #[derive(Debug, Clone)]
+struct RuntimeSemanticGuardState {
+    enabled: bool,
+    collection: String,
+    threshold: f64,
+}
+
+impl Default for RuntimeSemanticGuardState {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            collection: "semantic_guard".to_string(),
+            threshold: 0.82,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 struct RuntimeConfigState {
     defaults: ChannelRuntimeDefaults,
     perplexity_filter: crate::config::PerplexityFilterConfig,
     outbound_leak_guard: crate::config::OutboundLeakGuardConfig,
     canary_tokens: bool,
+    semantic_guard: RuntimeSemanticGuardState,
+    memory_config: crate::config::MemoryConfig,
     last_applied_stamp: Option<ConfigFileStamp>,
 }
 
@@ -289,6 +308,8 @@ struct RuntimeAutonomyPolicy {
     perplexity_filter: crate::config::PerplexityFilterConfig,
     outbound_leak_guard: crate::config::OutboundLeakGuardConfig,
     canary_tokens: bool,
+    semantic_guard: RuntimeSemanticGuardState,
+    memory_config: crate::config::MemoryConfig,
 }
 
 fn runtime_config_store() -> &'static Mutex<HashMap<PathBuf, RuntimeConfigState>> {
@@ -1137,6 +1158,14 @@ fn runtime_defaults_from_config(config: &Config) -> ChannelRuntimeDefaults {
     }
 }
 
+fn runtime_semantic_guard_from_config(config: &Config) -> RuntimeSemanticGuardState {
+    RuntimeSemanticGuardState {
+        enabled: config.security.semantic_guard,
+        collection: config.security.semantic_guard_collection.clone(),
+        threshold: config.security.semantic_guard_threshold,
+    }
+}
+
 fn runtime_autonomy_policy_from_config(config: &Config) -> RuntimeAutonomyPolicy {
     RuntimeAutonomyPolicy {
         auto_approve: config.autonomy.auto_approve.clone(),
@@ -1154,6 +1183,8 @@ fn runtime_autonomy_policy_from_config(config: &Config) -> RuntimeAutonomyPolicy
         perplexity_filter: config.security.perplexity_filter.clone(),
         outbound_leak_guard: config.security.outbound_leak_guard.clone(),
         canary_tokens: config.security.canary_tokens,
+        semantic_guard: runtime_semantic_guard_from_config(config),
+        memory_config: config.memory.clone(),
     }
 }
 
@@ -1235,6 +1266,69 @@ fn runtime_canary_tokens_snapshot(ctx: &ChannelRuntimeContext) -> bool {
         }
     }
     false
+}
+
+fn runtime_semantic_guard_snapshot(ctx: &ChannelRuntimeContext) -> RuntimeSemanticGuardState {
+    if let Some(config_path) = runtime_config_path(ctx) {
+        let store = runtime_config_store()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = store.get(&config_path) {
+            return state.semantic_guard.clone();
+        }
+    }
+    RuntimeSemanticGuardState::default()
+}
+
+fn runtime_memory_config_snapshot(ctx: &ChannelRuntimeContext) -> crate::config::MemoryConfig {
+    if let Some(config_path) = runtime_config_path(ctx) {
+        let store = runtime_config_store()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = store.get(&config_path) {
+            return state.memory_config.clone();
+        }
+    }
+    crate::config::MemoryConfig::default()
+}
+
+fn maybe_log_semantic_guard_startup_status(
+    source: &str,
+    memory: &crate::config::MemoryConfig,
+    semantic_guard: &RuntimeSemanticGuardState,
+    embedding_api_key: Option<&str>,
+) {
+    let guard = crate::security::SemanticGuard::from_config(
+        memory,
+        semantic_guard.enabled,
+        semantic_guard.collection.as_str(),
+        semantic_guard.threshold,
+        embedding_api_key,
+    );
+    let status = guard.startup_status();
+
+    if !semantic_guard.enabled {
+        tracing::debug!(source, "Semantic guard is disabled in config");
+        return;
+    }
+
+    if status.active {
+        tracing::info!(
+            source,
+            collection = %semantic_guard.collection,
+            threshold = semantic_guard.threshold,
+            "Semantic prompt-injection guard is active"
+        );
+        return;
+    }
+
+    tracing::info!(
+        source,
+        collection = %semantic_guard.collection,
+        threshold = semantic_guard.threshold,
+        reason = %status.reason.as_deref().unwrap_or("unknown"),
+        "Semantic prompt-injection guard configured but inactive; running lexical-only prompt guard"
+    );
 }
 
 fn snapshot_non_cli_excluded_tools(ctx: &ChannelRuntimeContext) -> Vec<String> {
@@ -1764,10 +1858,19 @@ async fn maybe_apply_runtime_config_update(ctx: &ChannelRuntimeContext) -> Resul
                 perplexity_filter: next_autonomy_policy.perplexity_filter.clone(),
                 outbound_leak_guard: next_autonomy_policy.outbound_leak_guard.clone(),
                 canary_tokens: next_autonomy_policy.canary_tokens,
+                semantic_guard: next_autonomy_policy.semantic_guard.clone(),
+                memory_config: next_autonomy_policy.memory_config.clone(),
                 last_applied_stamp: Some(stamp),
             },
         );
     }
+
+    maybe_log_semantic_guard_startup_status(
+        "runtime-reload",
+        &next_autonomy_policy.memory_config,
+        &next_autonomy_policy.semantic_guard,
+        next_defaults.api_key.as_deref(),
+    );
 
     ctx.approval_manager.replace_runtime_non_cli_policy(
         &next_autonomy_policy.auto_approve,
@@ -1800,6 +1903,10 @@ async fn maybe_apply_runtime_config_update(ctx: &ChannelRuntimeContext) -> Resul
         outbound_leak_guard_action = ?next_autonomy_policy.outbound_leak_guard.action,
         outbound_leak_guard_sensitivity = next_autonomy_policy.outbound_leak_guard.sensitivity,
         canary_tokens = next_autonomy_policy.canary_tokens,
+        semantic_guard_enabled = next_autonomy_policy.semantic_guard.enabled,
+        semantic_guard_collection = %next_autonomy_policy.semantic_guard.collection,
+        semantic_guard_threshold = next_autonomy_policy.semantic_guard.threshold,
+        memory_backend = %next_autonomy_policy.memory_config.backend,
         "Applied updated channel runtime config from disk"
     );
 
@@ -3473,7 +3580,42 @@ async fn process_channel_message(
     if handle_runtime_command_if_needed(ctx.as_ref(), &msg, target_channel.as_ref()).await {
         return;
     }
+    let runtime_defaults = runtime_defaults_snapshot(ctx.as_ref());
     if !msg.content.trim_start().starts_with('/') {
+        let prompt_guard =
+            crate::security::PromptGuard::with_config(crate::security::GuardAction::Block, 0.8);
+        if let crate::security::GuardResult::Blocked(reason) = prompt_guard.scan(&msg.content) {
+            runtime_trace::record_event(
+                "channel_message_blocked_prompt_guard",
+                Some(msg.channel.as_str()),
+                None,
+                None,
+                None,
+                Some(false),
+                Some("blocked by lexical prompt-injection guard"),
+                serde_json::json!({
+                    "sender": msg.sender,
+                    "message_id": msg.id,
+                    "mode": "lexical",
+                    "reason": reason.as_str(),
+                }),
+            );
+            if let Some(channel) = target_channel.as_ref() {
+                let warning = format!(
+                    "Request blocked by `security.prompt_guard` before provider execution.\n\
+reason: {reason}\n\
+If this input is legitimate, rephrase without instruction-overrides, system-prompt extraction, or credential exfiltration requests."
+                );
+                let _ = channel
+                    .send(
+                        &SendMessage::new(warning, &msg.reply_target)
+                            .in_thread(msg.thread_ts.clone()),
+                    )
+                    .await;
+            }
+            return;
+        }
+
         let perplexity_cfg = runtime_perplexity_filter_snapshot(ctx.as_ref());
         if let Some(assessment) =
             crate::security::detect_adversarial_suffix(&msg.content, &perplexity_cfg)
@@ -3507,6 +3649,77 @@ or tune thresholds in config.",
                     assessment.symbol_ratio,
                     perplexity_cfg.symbol_ratio_threshold,
                     assessment.suspicious_token_count
+                );
+                let _ = channel
+                    .send(
+                        &SendMessage::new(warning, &msg.reply_target)
+                            .in_thread(msg.thread_ts.clone()),
+                    )
+                    .await;
+            }
+            return;
+        }
+
+        let semantic_cfg = runtime_semantic_guard_snapshot(ctx.as_ref());
+        let semantic_match = if semantic_cfg.enabled {
+            let memory_cfg = runtime_memory_config_snapshot(ctx.as_ref());
+            let semantic_guard = crate::security::SemanticGuard::from_config(
+                &memory_cfg,
+                semantic_cfg.enabled,
+                semantic_cfg.collection.as_str(),
+                semantic_cfg.threshold,
+                runtime_defaults.api_key.as_deref(),
+            );
+            semantic_guard.detect(&msg.content).await
+        } else {
+            None
+        };
+        let guard_result = prompt_guard.scan_with_semantic_signal(
+            &msg.content,
+            semantic_match
+                .as_ref()
+                .map(|detection| ("semantic_similarity_prompt_injection", detection.score)),
+        );
+        if let crate::security::GuardResult::Blocked(reason) = guard_result {
+            runtime_trace::record_event(
+                "channel_message_blocked_prompt_guard",
+                Some(msg.channel.as_str()),
+                None,
+                None,
+                None,
+                Some(false),
+                Some("blocked by prompt-injection guard with semantic signal"),
+                serde_json::json!({
+                    "sender": msg.sender,
+                    "message_id": msg.id,
+                    "mode": if semantic_match.is_some() { "semantic" } else { "lexical" },
+                    "reason": reason.as_str(),
+                    "semantic": semantic_match.as_ref().map(|detection| serde_json::json!({
+                        "score": detection.score,
+                        "threshold": semantic_cfg.threshold,
+                        "collection": semantic_cfg.collection.as_str(),
+                        "category": detection.category.as_str(),
+                        "key": detection.key.as_str(),
+                    })),
+                }),
+            );
+            if let Some(channel) = target_channel.as_ref() {
+                let semantic_suffix = semantic_match
+                    .as_ref()
+                    .map(|detection| {
+                        format!(
+                            "\nsemantic_match={:.2} (threshold {:.2}), category={}, collection={}.",
+                            detection.score,
+                            semantic_cfg.threshold,
+                            detection.category,
+                            semantic_cfg.collection
+                        )
+                    })
+                    .unwrap_or_default();
+                let warning = format!(
+                    "Request blocked by `security.prompt_guard` before provider execution.\n\
+reason: {reason}{semantic_suffix}\n\
+If this input is legitimate, rephrase the request and avoid instruction-override framing."
                 );
                 let _ = channel
                     .send(
@@ -3575,7 +3788,6 @@ or tune thresholds in config.",
             }
         }
     }
-    let runtime_defaults = runtime_defaults_snapshot(ctx.as_ref());
     // Try classification first, fall back to sender/default route.
     let route = classify_message_route(
         &runtime_defaults.query_classification,
@@ -5526,6 +5738,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
     }
 
     let initial_stamp = config_file_stamp(&config.config_path).await;
+    let startup_semantic_guard = runtime_semantic_guard_from_config(&config);
     {
         let mut store = runtime_config_store()
             .lock()
@@ -5537,10 +5750,18 @@ pub async fn start_channels(config: Config) -> Result<()> {
                 perplexity_filter: config.security.perplexity_filter.clone(),
                 outbound_leak_guard: config.security.outbound_leak_guard.clone(),
                 canary_tokens: config.security.canary_tokens,
+                semantic_guard: startup_semantic_guard.clone(),
+                memory_config: config.memory.clone(),
                 last_applied_stamp: initial_stamp,
             },
         );
     }
+    maybe_log_semantic_guard_startup_status(
+        "startup",
+        &config.memory,
+        &startup_semantic_guard,
+        config.api_key.as_deref(),
+    );
 
     let base_observer: Arc<dyn Observer> =
         Arc::from(observability::create_observer(&config.observability));
@@ -9704,6 +9925,8 @@ BTC is currently around $65,000 based on latest tool output."#
                     perplexity_filter: crate::config::PerplexityFilterConfig::default(),
                     outbound_leak_guard: crate::config::OutboundLeakGuardConfig::default(),
                     canary_tokens: true,
+                    semantic_guard: RuntimeSemanticGuardState::default(),
+                    memory_config: crate::config::MemoryConfig::default(),
                     last_applied_stamp: None,
                 },
             );
@@ -9812,6 +10035,10 @@ BTC is currently around $65,000 based on latest tool output."#
         cfg.security.outbound_leak_guard.enabled = true;
         cfg.security.outbound_leak_guard.action = crate::config::OutboundLeakGuardAction::Block;
         cfg.security.outbound_leak_guard.sensitivity = 0.95;
+        cfg.security.semantic_guard = true;
+        cfg.security.semantic_guard_collection = "semantic_guard_test".to_string();
+        cfg.security.semantic_guard_threshold = 0.9;
+        cfg.memory.qdrant.url = Some("http://127.0.0.1:6333".to_string());
         cfg.save().await.expect("save config");
 
         let (_defaults, policy) = load_runtime_defaults_from_config_file(&config_path)
@@ -9847,6 +10074,13 @@ BTC is currently around $65,000 based on latest tool output."#
             crate::config::OutboundLeakGuardAction::Block
         );
         assert_eq!(policy.outbound_leak_guard.sensitivity, 0.95);
+        assert!(policy.semantic_guard.enabled);
+        assert_eq!(policy.semantic_guard.collection, "semantic_guard_test");
+        assert_eq!(policy.semantic_guard.threshold, 0.9);
+        assert_eq!(
+            policy.memory_config.qdrant.url.as_deref(),
+            Some("http://127.0.0.1:6333")
+        );
     }
 
     #[tokio::test]
@@ -9956,6 +10190,7 @@ BTC is currently around $65,000 based on latest tool output."#
             runtime_outbound_leak_guard_snapshot(runtime_ctx.as_ref()).action,
             crate::config::OutboundLeakGuardAction::Redact
         );
+        assert!(!runtime_semantic_guard_snapshot(runtime_ctx.as_ref()).enabled);
         let defaults = runtime_defaults_snapshot(runtime_ctx.as_ref());
         assert!(!defaults.auto_save_memory);
         assert_eq!(defaults.min_relevance_score, 0.15);
@@ -9979,6 +10214,10 @@ BTC is currently around $65,000 based on latest tool output."#
         cfg.security.perplexity_filter.perplexity_threshold = 12.5;
         cfg.security.outbound_leak_guard.action = crate::config::OutboundLeakGuardAction::Block;
         cfg.security.outbound_leak_guard.sensitivity = 0.92;
+        cfg.security.semantic_guard = true;
+        cfg.security.semantic_guard_collection = "semantic_guard_reload".to_string();
+        cfg.security.semantic_guard_threshold = 0.88;
+        cfg.memory.qdrant.url = Some("http://127.0.0.1:6333".to_string());
         cfg.memory.auto_save = true;
         cfg.memory.min_relevance_score = 0.65;
         cfg.agent.max_tool_iterations = 11;
@@ -10032,6 +10271,15 @@ BTC is currently around $65,000 based on latest tool output."#
             crate::config::OutboundLeakGuardAction::Block
         );
         assert_eq!(leak_guard_cfg.sensitivity, 0.92);
+        let semantic_guard_cfg = runtime_semantic_guard_snapshot(runtime_ctx.as_ref());
+        assert!(semantic_guard_cfg.enabled);
+        assert_eq!(semantic_guard_cfg.collection, "semantic_guard_reload");
+        assert_eq!(semantic_guard_cfg.threshold, 0.88);
+        let memory_cfg = runtime_memory_config_snapshot(runtime_ctx.as_ref());
+        assert_eq!(
+            memory_cfg.qdrant.url.as_deref(),
+            Some("http://127.0.0.1:6333")
+        );
         let defaults = runtime_defaults_snapshot(runtime_ctx.as_ref());
         assert!(defaults.auto_save_memory);
         assert_eq!(defaults.min_relevance_score, 0.65);
