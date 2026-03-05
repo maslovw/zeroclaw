@@ -48,6 +48,9 @@ jobs:
               shell: bash
               run: ./scripts/ci/ensure_cc.sh
 
+            - name: Pre-install rustfmt and clippy
+                          shell: bash
+                                        run: rustup component add rustfmt clippy --toolchain 1.92.0
             - name: Ensure cargo component
               shell: bash
               env:
