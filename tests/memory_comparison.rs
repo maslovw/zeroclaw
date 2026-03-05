@@ -226,17 +226,14 @@ async fn compare_persistence() {
     let sq_entry = sq2.get("persist_test").await.unwrap();
     let md_entry = md2.get("persist_test").await.unwrap();
 
+    let sq_status = if sq_entry.is_some() { "✅ Survived" } else { "❌ Lost" };
+    let md_status = if md_entry.is_some() { "✅ Survived" } else { "❌ Lost" };
+
     println!();
     println!("============================================================");
     println!("PERSISTENCE (store → drop → re-open → get):");
-    println!(
-        " SQLite:   {}",
-        if sq_entry.is_some() { "✅ Survived" } else { "❌ Lost" }
-    );
-    println!(
-        " Markdown: {}",
-        if md_entry.is_some() { "✅ Survived" } else { "❌ Lost" }
-    );
+    println!(" SQLite:   {sq_status}");
+    println!(" Markdown: {md_status}");
 
     // SQLite should always persist by key
     assert!(sq_entry.is_some());
@@ -312,18 +309,14 @@ async fn compare_forget() {
     let sq_forgot = sq.forget("secret").await.unwrap();
     let md_forgot = md.forget("secret").await.unwrap();
 
+    let sq_status = if sq_forgot { "✅ Deleted" } else { "❌ Kept" };
+    let md_status = if md_forgot { "✅ Deleted" } else { "⚠️  Cannot delete (audit trail)" };
+
     println!();
     println!("============================================================");
     println!("FORGET (delete sensitive data):");
-    println!(
-        " SQLite:   {} (count={})",
-        if sq_forgot { "✅ Deleted" } else { "❌ Kept" },
-        sq.count().await.unwrap()
-    );
-    println!(
-        " Markdown: {} (append-only by design)",
-        if md_forgot { "✅ Deleted" } else { "⚠️  Cannot delete (audit trail)" },
-    );
+    println!(" SQLite:   {} (count={})", sq_status, sq.count().await.unwrap());
+    println!(" Markdown: {} (append-only by design)", md_status);
 
     // SQLite can delete
     assert!(sq_forgot);
