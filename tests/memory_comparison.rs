@@ -86,11 +86,19 @@ async fn compare_recall_quality() {
         ("editor", "Uses VS Code with rust-analyzer", MemoryCategory::Core),
         ("tz", "Timezone is EST, works 9-5", MemoryCategory::Core),
         ("proj1", "Working on ZeroClaw AI assistant", MemoryCategory::Daily),
-        ("proj2", "Previous project was a web scraper in Python", MemoryCategory::Daily),
+        (
+            "proj2",
+            "Previous project was a web scraper in Python",
+            MemoryCategory::Daily,
+        ),
         ("deploy", "Deploys to VPS via Docker", MemoryCategory::Core),
         ("model", "Prefers Claude Sonnet for coding tasks", MemoryCategory::Core),
         ("style", "Likes concise responses, no fluff", MemoryCategory::Core),
-        ("rust_note", "Rust's ownership model prevents memory bugs", MemoryCategory::Daily),
+        (
+            "rust_note",
+            "Rust's ownership model prevents memory bugs",
+            MemoryCategory::Daily,
+        ),
         ("perf", "Cares about binary size and startup time", MemoryCategory::Core),
     ];
 
@@ -231,11 +239,19 @@ async fn compare_persistence() {
     println!("PERSISTENCE (store → drop → re-open → get):");
     println!(
         " SQLite:   {}",
-        if sq_entry.is_some() { "✅ Survived" } else { "❌ Lost" }
+        if sq_entry.is_some() {
+            "✅ Survived"
+        } else {
+            "❌ Lost"
+        }
     );
     println!(
         " Markdown: {}",
-        if md_entry.is_some() { "✅ Survived" } else { "❌ Lost" }
+        if md_entry.is_some() {
+            "✅ Survived"
+        } else {
+            "❌ Lost"
+        }
     );
 
     // SQLite should always persist by key
@@ -317,12 +333,20 @@ async fn compare_forget() {
     println!("FORGET (delete sensitive data):");
     println!(
         " SQLite:   {} (count={})",
-        if sq_forgot { "✅ Deleted" } else { "❌ Kept" },
+        if sq_forgot {
+            "✅ Deleted"
+        } else {
+            "❌ Kept"
+        },
         sq.count().await.unwrap()
     );
     println!(
         " Markdown: {} (append-only by design)",
-        if md_forgot { "✅ Deleted" } else { "⚠️  Cannot delete (audit trail)" },
+        if md_forgot {
+            "✅ Deleted"
+        } else {
+            "⚠️  Cannot delete (audit trail)"
+        },
     );
 
     // SQLite can delete
@@ -370,7 +394,7 @@ async fn compare_category_filter() {
     let sq_daily = sq.list(Some(&MemoryCategory::Daily), None).await.unwrap();
     let sq_conv = sq
         .list(Some(&MemoryCategory::Conversation), None)
-        .await
+        .awaitchore(ci): clean formatting for rustfmt in memory_comparison.rs
         .unwrap();
     let sq_all = sq.list(None, None).await.unwrap();
 
