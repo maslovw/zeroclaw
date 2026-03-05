@@ -52,18 +52,18 @@ jobs:
               shell: bash
               run: rustup component add rustfmt clippy --toolchain 1.92.0
 
-            - name: Ensure cargo component
-              shell: bash
-              env:
-                  ENSURE_CARGO_COMPONENT_STRICT: "true"
-              run: bash ./scripts/ci/ensure_cargo_component.sh 1.92.0
-
             - name: Activate toolchain binaries on PATH
               shell: bash
               run: |
                   set -euo pipefail
                   toolchain_bin="$(dirname "$(rustup which --toolchain 1.92.0 cargo)")"
                   echo "$toolchain_bin" >> "$GITHUB_PATH"
+
+            - name: Ensure cargo component
+              shell: bash
+              env:
+                  ENSURE_CARGO_COMPONENT_STRICT: "true"
+              run: bash ./scripts/ci/ensure_cargo_component.sh 1.92.0
 
             - name: Cache Cargo registry and target
               uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v3
