@@ -319,8 +319,8 @@ async fn compare_forget() {
     println!();
     println!("============================================================");
     println!("FORGET (delete sensitive data):");
-            println!(
-            " SQLite:   {} (count={})",
+        println!(
+           " SQLite:   {} (count={})",
             sq_status,
             sq.count().await.unwrap()
         );
