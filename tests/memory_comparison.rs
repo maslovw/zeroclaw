@@ -57,8 +57,8 @@ async fn compare_store_speed() {
     }
     let md_dur = start.elapsed();
 
-    println!("
-============================================================");
+    println!();
+    println!("============================================================");
     println!("STORE {n} entries:");
     println!(" SQLite:   {:?}", sq_dur);
     println!(" Markdown: {:?}", md_dur);
@@ -86,19 +86,11 @@ async fn compare_recall_quality() {
         ("editor", "Uses VS Code with rust-analyzer", MemoryCategory::Core),
         ("tz", "Timezone is EST, works 9-5", MemoryCategory::Core),
         ("proj1", "Working on ZeroClaw AI assistant", MemoryCategory::Daily),
-        (
-            "proj2",
-            "Previous project was a web scraper in Python",
-            MemoryCategory::Daily,
-        ),
+        ("proj2", "Previous project was a web scraper in Python", MemoryCategory::Daily),
         ("deploy", "Deploys to VPS via Docker", MemoryCategory::Core),
         ("model", "Prefers Claude Sonnet for coding tasks", MemoryCategory::Core),
         ("style", "Likes concise responses, no fluff", MemoryCategory::Core),
-        (
-            "rust_note",
-            "Rust's ownership model prevents memory bugs",
-            MemoryCategory::Daily,
-        ),
+        ("rust_note", "Rust's ownership model prevents memory bugs", MemoryCategory::Daily),
         ("perf", "Cares about binary size and startup time", MemoryCategory::Core),
     ];
 
@@ -117,8 +109,8 @@ async fn compare_recall_quality() {
         ("binary size startup", "Multi-keyword partial match"),
     ];
 
-    println!("
-============================================================");
+    println!();
+    println!("============================================================");
     println!("RECALL QUALITY (10 entries seeded):
 ");
 
@@ -185,8 +177,8 @@ async fn compare_recall_speed() {
     let md_results = md.recall("Rust systems", 10, None).await.unwrap();
     let md_dur = start.elapsed();
 
-    println!("
-============================================================");
+    println!();
+    println!("============================================================");
     println!("RECALL from {n} entries (query: \"Rust systems\", limit 10):");
     println!(" SQLite:   {:?} → {} results", sq_dur, sq_results.len());
     println!(" Markdown: {:?} → {} results", md_dur, md_results.len());
@@ -234,24 +226,16 @@ async fn compare_persistence() {
     let sq_entry = sq2.get("persist_test").await.unwrap();
     let md_entry = md2.get("persist_test").await.unwrap();
 
-    println!("
-============================================================");
+    println!();
+    println!("============================================================");
     println!("PERSISTENCE (store → drop → re-open → get):");
     println!(
         " SQLite:   {}",
-        if sq_entry.is_some() {
-            "✅ Survived"
-        } else {
-            "❌ Lost"
-        }
+        if sq_entry.is_some() { "✅ Survived" } else { "❌ Lost" }
     );
     println!(
         " Markdown: {}",
-        if md_entry.is_some() {
-            "✅ Survived"
-        } else {
-            "❌ Lost"
-        }
+        if md_entry.is_some() { "✅ Survived" } else { "❌ Lost" }
     );
 
     // SQLite should always persist by key
@@ -291,8 +275,8 @@ async fn compare_upsert() {
     let sq_entry = sq.get("pref").await.unwrap();
     let md_results = md.recall("loves Rust", 5, None).await.unwrap();
 
-    println!("
-============================================================");
+    println!();
+    println!("============================================================");
     println!("UPSERT (store same key twice):");
     println!(
         " SQLite:   count={sq_count}, latest=\"{}\"",
@@ -328,25 +312,17 @@ async fn compare_forget() {
     let sq_forgot = sq.forget("secret").await.unwrap();
     let md_forgot = md.forget("secret").await.unwrap();
 
-    println!("
-============================================================");
+    println!();
+    println!("============================================================");
     println!("FORGET (delete sensitive data):");
     println!(
         " SQLite:   {} (count={})",
-        if sq_forgot {
-            "✅ Deleted"
-        } else {
-            "❌ Kept"
-        },
+        if sq_forgot { "✅ Deleted" } else { "❌ Kept" },
         sq.count().await.unwrap()
     );
     println!(
         " Markdown: {} (append-only by design)",
-        if md_forgot {
-            "✅ Deleted"
-        } else {
-            "⚠️  Cannot delete (audit trail)"
-        },
+        if md_forgot { "✅ Deleted" } else { "⚠️  Cannot delete (audit trail)" },
     );
 
     // SQLite can delete
@@ -394,7 +370,7 @@ async fn compare_category_filter() {
     let sq_daily = sq.list(Some(&MemoryCategory::Daily), None).await.unwrap();
     let sq_conv = sq
         .list(Some(&MemoryCategory::Conversation), None)
-        .awaitchore(ci): clean formatting for rustfmt in memory_comparison.rs
+        .await
         .unwrap();
     let sq_all = sq.list(None, None).await.unwrap();
 
@@ -402,8 +378,8 @@ async fn compare_category_filter() {
     let md_daily = md.list(Some(&MemoryCategory::Daily), None).await.unwrap();
     let md_all = md.list(None, None).await.unwrap();
 
-    println!("
-============================================================");
+    println!();
+    println!("============================================================");
     println!("CATEGORY FILTERING:");
     println!(
         " SQLite:   core={}, daily={}, conv={}, all={}",
