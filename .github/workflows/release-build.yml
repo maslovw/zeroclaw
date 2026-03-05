@@ -47,19 +47,16 @@ jobs:
             - name: Ensure C toolchain for Rust builds
               shell: bash
               run: ./scripts/ci/ensure_cc.sh
-
-            - name: Pre-install rustfmt and clippy
-                          shell: bash
-                                        run: rustup component add rustfmt clippy --toolchain 1.92.0
-            - name: Ensure cargo component
+            - name: Ensure rustfmt and clippy components
+              shell: bash
+              run: rustup component add rustfmt clippy --toolchain 1.92.0
+              - name: Ensure cargo component
               shell: bash
               env:
                   ENSURE_CARGO_COMPONENT_STRICT: "true"
               run: bash ./scripts/ci/ensure_cargo_component.sh 1.92.0
 
-            - name: Ensure rustfmt and clippy components
-              shell: bash
-              run: rustup component add rustfmt clippy --toolchain 1.92.0
+        
 
             - name: Activate toolchain binaries on PATH
               shell: bash
