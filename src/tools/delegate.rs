@@ -26,6 +26,46 @@ const DEFAULT_COORDINATION_LEAD_AGENT: &str = "delegate-lead";
 /// Maximum characters retained in coordination event previews.
 const COORDINATION_PREVIEW_MAX_CHARS: usize = 240;
 
+/// Load an optional workspace agent prompt from `<workspace_dir>/agents/<agent_name>.md`.
+///
+/// Returns `None` when the file does not exist or cannot be read. The workspace
+/// prompt is appended to the config-level system prompt (if any) so that workspace
+/// authors can layer additional instructions per agent without touching config.
+pub(crate) fn load_workspace_agent_prompt(
+    workspace_dir: &std::path::Path,
+    agent_name: &str,
+) -> Option<String> {
+    let path = workspace_dir.join("agents").join(format!("{agent_name}.md"));
+    match std::fs::read_to_string(&path) {
+        Ok(contents) if !contents.trim().is_empty() => {
+            tracing::debug!(
+                agent = agent_name,
+                path = %path.display(),
+                "loaded workspace agent prompt ({} bytes)",
+                contents.len(),
+            );
+            Some(contents)
+        }
+        Ok(_) => None, // empty file
+        Err(_) => None, // file not found or unreadable
+    }
+}
+
+/// Merge the config-level system prompt with an optional workspace agent prompt.
+///
+/// When both are present the workspace prompt is appended after a blank line separator.
+pub(crate) fn resolve_agent_system_prompt(
+    config_prompt: Option<&str>,
+    workspace_prompt: Option<&str>,
+) -> Option<String> {
+    match (config_prompt, workspace_prompt) {
+        (Some(cfg), Some(ws)) => Some(format!("{cfg}\n\n{ws}")),
+        (Some(cfg), None) => Some(cfg.to_string()),
+        (None, Some(ws)) => Some(ws.to_string()),
+        (None, None) => None,
+    }
+}
+
 /// Tool that delegates a subtask to a named agent with a different
 /// provider/model configuration. Enables multi-agent workflows where
 /// a primary agent can hand off specialized work (research, coding,
@@ -37,6 +77,8 @@ pub struct DelegateTool {
     fallback_credential: Option<String>,
     /// Provider runtime options inherited from root config.
     provider_runtime_options: providers::ProviderRuntimeOptions,
+    /// Reliability config for resilient provider creation (retries, fallbacks).
+    reliability_config: crate::config::ReliabilityConfig,
     /// Depth at which this tool instance lives in the delegation chain.
     depth: u32,
     /// Parent tool registry for agentic sub-agents.
@@ -53,6 +95,9 @@ pub struct DelegateTool {
     load_tracker: AgentLoadTracker,
     /// Optional runtime config file path for hot-reloaded orchestration settings.
     runtime_config_path: Option<PathBuf>,
+    /// Workspace root directory used to discover per-agent prompt files
+    /// at `<workspace_dir>/agents/<agent_name>.md`.
+    workspace_dir: Option<PathBuf>,
 }
 
 impl DelegateTool {
@@ -66,6 +111,7 @@ impl DelegateTool {
             fallback_credential,
             security,
             providers::ProviderRuntimeOptions::default(),
+            crate::config::ReliabilityConfig::default(),
         )
     }
 
@@ -74,6 +120,7 @@ impl DelegateTool {
         fallback_credential: Option<String>,
         security: Arc<SecurityPolicy>,
         provider_runtime_options: providers::ProviderRuntimeOptions,
+        reliability_config: crate::config::ReliabilityConfig,
     ) -> Self {
         let coordination_bus = build_coordination_bus(&agents, DEFAULT_COORDINATION_LEAD_AGENT);
         Self {
@@ -81,6 +128,7 @@ impl DelegateTool {
             security,
             fallback_credential,
             provider_runtime_options,
+            reliability_config,
             depth: 0,
             parent_tools: Arc::new(Vec::new()),
             multimodal_config: crate::config::MultimodalConfig::default(),
@@ -89,6 +137,7 @@ impl DelegateTool {
             team_settings: AgentTeamsConfig::default(),
             load_tracker: AgentLoadTracker::new(),
             runtime_config_path: None,
+            workspace_dir: None,
         }
     }
 
@@ -107,6 +156,7 @@ impl DelegateTool {
             security,
             depth,
             providers::ProviderRuntimeOptions::default(),
+            crate::config::ReliabilityConfig::default(),
         )
     }
 
@@ -116,6 +166,7 @@ impl DelegateTool {
         security: Arc<SecurityPolicy>,
         depth: u32,
         provider_runtime_options: providers::ProviderRuntimeOptions,
+        reliability_config: crate::config::ReliabilityConfig,
     ) -> Self {
         let coordination_bus = build_coordination_bus(&agents, DEFAULT_COORDINATION_LEAD_AGENT);
         Self {
@@ -123,6 +174,7 @@ impl DelegateTool {
             security,
             fallback_credential,
             provider_runtime_options,
+            reliability_config,
             depth,
             parent_tools: Arc::new(Vec::new()),
             multimodal_config: crate::config::MultimodalConfig::default(),
@@ -131,12 +183,22 @@ impl DelegateTool {
             team_settings: AgentTeamsConfig::default(),
             load_tracker: AgentLoadTracker::new(),
             runtime_config_path: None,
+            workspace_dir: None,
         }
     }
 
     /// Attach parent tools used to build sub-agent allowlist registries.
     pub fn with_parent_tools(mut self, parent_tools: Arc<Vec<Arc<dyn Tool>>>) -> Self {
         self.parent_tools = parent_tools;
+        self
+    }
+
+    /// Set the workspace root directory for per-agent prompt discovery.
+    ///
+    /// When set, the delegate tool will check for `<workspace_dir>/agents/<agent_name>.md`
+    /// before each execution and append its contents to the agent's system prompt.
+    pub fn with_workspace_dir(mut self, workspace_dir: PathBuf) -> Self {
+        self.workspace_dir = Some(workspace_dir);
         self
     }
 
@@ -391,9 +453,11 @@ impl Tool for DelegateTool {
         #[allow(clippy::option_as_ref_deref)]
         let provider_credential = provider_credential_owned.as_ref().map(String::as_str);
 
-        let provider: Box<dyn Provider> = match providers::create_provider_with_options(
+        let provider: Box<dyn Provider> = match providers::create_resilient_provider_with_options(
             &agent_config.provider,
             provider_credential,
+            None,
+            &self.reliability_config,
             &self.provider_runtime_options,
         ) {
             Ok(p) => p,
@@ -426,6 +490,16 @@ impl Tool for DelegateTool {
 
         let temperature = agent_config.temperature.unwrap_or(0.7);
 
+        // Resolve effective system prompt: config-level + optional workspace agent prompt.
+        let workspace_prompt = self
+            .workspace_dir
+            .as_deref()
+            .and_then(|dir| load_workspace_agent_prompt(dir, agent_name));
+        let effective_system_prompt = resolve_agent_system_prompt(
+            agent_config.system_prompt.as_deref(),
+            workspace_prompt.as_deref(),
+        );
+
         // Agentic mode: run full tool-call loop with allowlisted tools.
         if agent_config.agentic {
             let result = self
@@ -435,6 +509,7 @@ impl Tool for DelegateTool {
                     &*provider,
                     &full_prompt,
                     temperature,
+                    effective_system_prompt.as_deref(),
                 )
                 .await?;
 
@@ -465,7 +540,7 @@ impl Tool for DelegateTool {
         let result = tokio::time::timeout(
             Duration::from_secs(DELEGATE_TIMEOUT_SECS),
             provider.chat_with_system(
-                agent_config.system_prompt.as_deref(),
+                effective_system_prompt.as_deref(),
                 &full_prompt,
                 &agent_config.model,
                 temperature,
@@ -540,6 +615,7 @@ impl DelegateTool {
         provider: &dyn Provider,
         full_prompt: &str,
         temperature: f64,
+        effective_system_prompt: Option<&str>,
     ) -> anyhow::Result<ToolResult> {
         if agent_config.allowed_tools.is_empty() {
             return Ok(ToolResult {
@@ -578,8 +654,8 @@ impl DelegateTool {
         }
 
         let mut history = Vec::new();
-        if let Some(system_prompt) = agent_config.system_prompt.as_ref() {
-            history.push(ChatMessage::system(system_prompt.clone()));
+        if let Some(system_prompt) = effective_system_prompt {
+            history.push(ChatMessage::system(system_prompt.to_string()));
         }
         history.push(ChatMessage::user(full_prompt.to_string()));
 
@@ -1542,7 +1618,7 @@ max_concurrent = {subagents_max_concurrent}
 
         let provider = OneToolThenFinalProvider;
         let result = tool
-            .execute_agentic("agentic", &config, &provider, "run", 0.2)
+            .execute_agentic("agentic", &config, &provider, "run", 0.2, None)
             .await
             .unwrap();
 
@@ -1564,7 +1640,7 @@ max_concurrent = {subagents_max_concurrent}
 
         let provider = OneToolThenFinalProvider;
         let result = tool
-            .execute_agentic("agentic", &config, &provider, "run", 0.2)
+            .execute_agentic("agentic", &config, &provider, "run", 0.2, None)
             .await
             .unwrap();
 
@@ -1584,7 +1660,7 @@ max_concurrent = {subagents_max_concurrent}
 
         let provider = InfiniteToolCallProvider;
         let result = tool
-            .execute_agentic("agentic", &config, &provider, "run", 0.2)
+            .execute_agentic("agentic", &config, &provider, "run", 0.2, None)
             .await
             .unwrap();
 
@@ -1604,7 +1680,7 @@ max_concurrent = {subagents_max_concurrent}
 
         let provider = FailingProvider;
         let result = tool
-            .execute_agentic("agentic", &config, &provider, "run", 0.2)
+            .execute_agentic("agentic", &config, &provider, "run", 0.2, None)
             .await
             .unwrap();
 
@@ -1733,5 +1809,65 @@ max_concurrent = {subagents_max_concurrent}
         assert_eq!(state_entry.version, 2);
         assert_eq!(state_entry.value["phase"], json!("completed"));
         assert_eq!(state_entry.value["success"], json!(true));
+    }
+
+    #[test]
+    fn load_workspace_agent_prompt_reads_file() {
+        let tmp = TempDir::new().unwrap();
+        let agents_dir = tmp.path().join("agents");
+        std::fs::create_dir_all(&agents_dir).unwrap();
+        std::fs::write(
+            agents_dir.join("researcher.md"),
+            "Always cite sources.\n",
+        )
+        .unwrap();
+
+        let prompt = load_workspace_agent_prompt(tmp.path(), "researcher");
+        assert_eq!(prompt.as_deref(), Some("Always cite sources.\n"));
+    }
+
+    #[test]
+    fn load_workspace_agent_prompt_returns_none_for_missing_file() {
+        let tmp = TempDir::new().unwrap();
+        assert!(load_workspace_agent_prompt(tmp.path(), "nonexistent").is_none());
+    }
+
+    #[test]
+    fn load_workspace_agent_prompt_ignores_empty_file() {
+        let tmp = TempDir::new().unwrap();
+        let agents_dir = tmp.path().join("agents");
+        std::fs::create_dir_all(&agents_dir).unwrap();
+        std::fs::write(agents_dir.join("researcher.md"), "   \n  ").unwrap();
+
+        assert!(load_workspace_agent_prompt(tmp.path(), "researcher").is_none());
+    }
+
+    #[test]
+    fn resolve_agent_system_prompt_merges_both() {
+        let result = resolve_agent_system_prompt(
+            Some("You are a researcher."),
+            Some("Always cite sources."),
+        );
+        assert_eq!(
+            result.as_deref(),
+            Some("You are a researcher.\n\nAlways cite sources.")
+        );
+    }
+
+    #[test]
+    fn resolve_agent_system_prompt_config_only() {
+        let result = resolve_agent_system_prompt(Some("Config prompt."), None);
+        assert_eq!(result.as_deref(), Some("Config prompt."));
+    }
+
+    #[test]
+    fn resolve_agent_system_prompt_workspace_only() {
+        let result = resolve_agent_system_prompt(None, Some("Workspace prompt."));
+        assert_eq!(result.as_deref(), Some("Workspace prompt."));
+    }
+
+    #[test]
+    fn resolve_agent_system_prompt_both_none() {
+        assert!(resolve_agent_system_prompt(None, None).is_none());
     }
 }

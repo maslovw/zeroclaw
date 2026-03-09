@@ -6,6 +6,7 @@
 
 use super::agent_load_tracker::AgentLoadTracker;
 use super::agent_selection::{select_agent_with_load, AgentSelectionPolicy};
+use super::delegate::{load_workspace_agent_prompt, resolve_agent_system_prompt};
 use super::orchestration_settings::load_orchestration_settings;
 use super::subagent_registry::{SubAgentRegistry, SubAgentSession, SubAgentStatus};
 use super::traits::{Tool, ToolResult};
@@ -33,12 +34,15 @@ pub struct SubAgentSpawnTool {
     security: Arc<SecurityPolicy>,
     fallback_credential: Option<String>,
     provider_runtime_options: providers::ProviderRuntimeOptions,
+    reliability_config: crate::config::ReliabilityConfig,
     registry: Arc<SubAgentRegistry>,
     parent_tools: Arc<Vec<Arc<dyn Tool>>>,
     multimodal_config: crate::config::MultimodalConfig,
     subagent_settings: SubAgentsConfig,
     load_tracker: AgentLoadTracker,
     runtime_config_path: Option<PathBuf>,
+    /// Workspace root directory for per-agent prompt discovery.
+    workspace_dir: Option<PathBuf>,
 }
 
 impl SubAgentSpawnTool {
@@ -48,6 +52,7 @@ impl SubAgentSpawnTool {
         fallback_credential: Option<String>,
         security: Arc<SecurityPolicy>,
         provider_runtime_options: providers::ProviderRuntimeOptions,
+        reliability_config: crate::config::ReliabilityConfig,
         registry: Arc<SubAgentRegistry>,
         parent_tools: Arc<Vec<Arc<dyn Tool>>>,
         multimodal_config: crate::config::MultimodalConfig,
@@ -66,18 +71,26 @@ impl SubAgentSpawnTool {
             security,
             fallback_credential,
             provider_runtime_options,
+            reliability_config,
             registry,
             parent_tools,
             multimodal_config,
             subagent_settings,
             load_tracker: AgentLoadTracker::new(),
             runtime_config_path,
+            workspace_dir: None,
         }
     }
 
     /// Reuse a shared runtime load tracker.
     pub fn with_load_tracker(mut self, load_tracker: AgentLoadTracker) -> Self {
         self.load_tracker = load_tracker;
+        self
+    }
+
+    /// Set the workspace root directory for per-agent prompt discovery.
+    pub fn with_workspace_dir(mut self, workspace_dir: PathBuf) -> Self {
+        self.workspace_dir = Some(workspace_dir);
         self
     }
 
@@ -282,9 +295,11 @@ impl Tool for SubAgentSpawnTool {
         #[allow(clippy::option_as_ref_deref)]
         let provider_credential = provider_credential_owned.as_ref().map(String::as_str);
 
-        let provider: Box<dyn Provider> = match providers::create_provider_with_options(
+        let provider: Box<dyn Provider> = match providers::create_resilient_provider_with_options(
             &agent_config.provider,
             provider_credential,
+            None,
+            &self.reliability_config,
             &self.provider_runtime_options,
         ) {
             Ok(p) => p,
@@ -307,6 +322,16 @@ impl Tool for SubAgentSpawnTool {
         } else {
             format!("[Context]\n{context}\n\n[Task]\n{task}")
         };
+
+        // Resolve effective system prompt: config-level + optional workspace agent prompt.
+        let workspace_prompt = self
+            .workspace_dir
+            .as_deref()
+            .and_then(|dir| load_workspace_agent_prompt(dir, &agent_name));
+        let effective_system_prompt = resolve_agent_system_prompt(
+            agent_config.system_prompt.as_deref(),
+            workspace_prompt.as_deref(),
+        );
 
         let session_id = uuid::Uuid::new_v4().to_string();
         let agent_name_owned = agent_name.clone();
@@ -359,11 +384,18 @@ impl Tool for SubAgentSpawnTool {
                     &full_prompt,
                     &parent_tools,
                     &multimodal_config,
+                    effective_system_prompt.as_deref(),
                 )
                 .await
             } else {
-                run_simple_background(&agent_name_owned, &agent_config, &*provider, &full_prompt)
-                    .await
+                run_simple_background(
+                    &agent_name_owned,
+                    &agent_config,
+                    &*provider,
+                    &full_prompt,
+                    effective_system_prompt.as_deref(),
+                )
+                .await
             };
 
             match result {
@@ -415,13 +447,14 @@ async fn run_simple_background(
     agent_config: &DelegateAgentConfig,
     provider: &dyn Provider,
     full_prompt: &str,
+    effective_system_prompt: Option<&str>,
 ) -> anyhow::Result<ToolResult> {
     let temperature = agent_config.temperature.unwrap_or(0.7);
 
     let result = tokio::time::timeout(
         Duration::from_secs(SPAWN_TIMEOUT_SECS),
         provider.chat_with_system(
-            agent_config.system_prompt.as_deref(),
+            effective_system_prompt,
             full_prompt,
             &agent_config.model,
             temperature,
@@ -517,6 +550,7 @@ async fn run_agentic_background(
     full_prompt: &str,
     parent_tools: &[Arc<dyn Tool>],
     multimodal_config: &crate::config::MultimodalConfig,
+    effective_system_prompt: Option<&str>,
 ) -> anyhow::Result<ToolResult> {
     if agent_config.allowed_tools.is_empty() {
         return Ok(ToolResult {
@@ -559,8 +593,8 @@ async fn run_agentic_background(
 
     let temperature = agent_config.temperature.unwrap_or(0.7);
     let mut history = Vec::new();
-    if let Some(system_prompt) = agent_config.system_prompt.as_ref() {
-        history.push(ChatMessage::system(system_prompt.clone()));
+    if let Some(system_prompt) = effective_system_prompt {
+        history.push(ChatMessage::system(system_prompt.to_string()));
     }
     history.push(ChatMessage::user(full_prompt.to_string()));
 
@@ -695,6 +729,7 @@ queue_poll_ms = 10
             None,
             security,
             providers::ProviderRuntimeOptions::default(),
+            crate::config::ReliabilityConfig::default(),
             Arc::new(SubAgentRegistry::new()),
             Arc::new(Vec::new()),
             crate::config::MultimodalConfig::default(),
@@ -823,6 +858,7 @@ queue_poll_ms = 10
             None,
             test_security(),
             providers::ProviderRuntimeOptions::default(),
+            crate::config::ReliabilityConfig::default(),
             Arc::new(SubAgentRegistry::new()),
             Arc::new(Vec::new()),
             crate::config::MultimodalConfig::default(),
@@ -854,6 +890,7 @@ queue_poll_ms = 10
             None,
             test_security(),
             providers::ProviderRuntimeOptions::default(),
+            crate::config::ReliabilityConfig::default(),
             Arc::new(SubAgentRegistry::new()),
             Arc::new(Vec::new()),
             crate::config::MultimodalConfig::default(),
@@ -932,6 +969,7 @@ queue_poll_ms = 10
             None,
             test_security(),
             providers::ProviderRuntimeOptions::default(),
+            crate::config::ReliabilityConfig::default(),
             registry,
             Arc::new(Vec::new()),
             crate::config::MultimodalConfig::default(),
@@ -972,6 +1010,7 @@ queue_poll_ms = 10
             None,
             test_security(),
             providers::ProviderRuntimeOptions::default(),
+            crate::config::ReliabilityConfig::default(),
             registry,
             Arc::new(Vec::new()),
             crate::config::MultimodalConfig::default(),

@@ -658,9 +658,11 @@ pub fn all_tools_with_runtime(
             delegate_fallback_credential.clone(),
             security.clone(),
             provider_runtime_options.clone(),
+            root_config.reliability.clone(),
         )
         .with_parent_tools(parent_tools.clone())
         .with_multimodal_config(root_config.multimodal.clone())
+        .with_workspace_dir(workspace_dir.to_path_buf())
         .with_load_tracker(load_tracker.clone())
         .with_runtime_team_settings(
             root_config.agent.teams.enabled,
@@ -720,6 +722,7 @@ pub fn all_tools_with_runtime(
                 delegate_fallback_credential,
                 security.clone(),
                 provider_runtime_options,
+                root_config.reliability.clone(),
                 subagent_registry.clone(),
                 parent_tools,
                 root_config.multimodal.clone(),
@@ -728,7 +731,8 @@ pub fn all_tools_with_runtime(
                 root_config.agent.subagents.auto_activate,
                 runtime_config_path,
             )
-            .with_load_tracker(load_tracker),
+            .with_load_tracker(load_tracker)
+            .with_workspace_dir(workspace_dir.to_path_buf()),
         ));
         tool_arcs.push(Arc::new(SubAgentListTool::new(subagent_registry.clone())));
         tool_arcs.push(Arc::new(SubAgentManageTool::new(
