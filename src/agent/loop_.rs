@@ -995,6 +995,7 @@ pub(crate) async fn agent_turn(
     silent: bool,
     multimodal_config: &crate::config::MultimodalConfig,
     max_tool_iterations: usize,
+    hooks: Option<&crate::hooks::HookRunner>,
 ) -> Result<String> {
     TOOL_LOOP_CANARY_TOKENS_ENABLED
         .scope(
@@ -1014,7 +1015,7 @@ pub(crate) async fn agent_turn(
                 max_tool_iterations,
                 None,
                 None,
-                None,
+                hooks,
                 &[],
             ),
         )
@@ -2923,7 +2924,8 @@ pub async fn run(
     }
     system_prompt.push_str(&build_shell_policy_instructions(&config.autonomy));
 
-    let configured_hooks = crate::hooks::create_runner_from_config(&config.hooks);
+    let config_dir = config.config_path.parent().unwrap_or(std::path::Path::new("."));
+    let configured_hooks = crate::hooks::create_runner_from_config(&config.hooks, config_dir);
     let effective_hooks = hooks.or(configured_hooks.as_deref());
 
     // ── Approval manager (supervised mode) ───────────────────────
@@ -3583,6 +3585,8 @@ pub async fn process_message_with_session(
     } else {
         None
     };
+    let config_dir = config.config_path.parent().unwrap_or(std::path::Path::new("."));
+    let configured_hooks = crate::hooks::create_runner_from_config(&config.hooks, config_dir);
     let response = scope_cost_enforcement_context(
         cost_enforcement_context,
         SAFETY_HEARTBEAT_CONFIG.scope(
@@ -3598,6 +3602,7 @@ pub async fn process_message_with_session(
                 true,
                 &config.multimodal,
                 config.agent.max_tool_iterations,
+                configured_hooks.as_deref(),
             ),
         ),
     )

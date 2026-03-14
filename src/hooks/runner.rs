@@ -32,8 +32,11 @@ impl HookRunner {
 
     /// Build a hook runner from configuration, registering enabled built-in hooks.
     ///
+    /// `config_dir` is the directory containing `config.toml` (typically `.zeroclaw/`).
+    /// Relative log paths in hook config are resolved against this directory.
+    ///
     /// Returns `None` if hooks are disabled in config.
-    pub fn from_config(config: &HooksConfig) -> Option<Self> {
+    pub fn from_config(config: &HooksConfig, config_dir: &std::path::Path) -> Option<Self> {
         if !config.enabled {
             return None;
         }
@@ -46,6 +49,17 @@ impl HookRunner {
         }
         if config.builtin.session_memory {
             runner.register(Box::new(super::builtin::SessionMemoryHook));
+        }
+        if config.builtin.tool_audit {
+            let log_file = config.builtin.tool_audit_log.as_ref().map(|p| {
+                let path = std::path::PathBuf::from(p);
+                if path.is_absolute() {
+                    path
+                } else {
+                    config_dir.join(path)
+                }
+            });
+            runner.register(Box::new(super::builtin::ToolAuditHook::new(log_file)));
         }
         Some(runner)
     }

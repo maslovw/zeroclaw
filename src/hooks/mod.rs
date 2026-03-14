@@ -11,6 +11,7 @@ pub use traits::{HookHandler, HookResult};
 
 pub fn create_runner_from_config(
     config: &crate::config::HooksConfig,
+    config_dir: &std::path::Path,
 ) -> Option<std::sync::Arc<HookRunner>> {
-    HookRunner::from_config(config).map(std::sync::Arc::new)
+    HookRunner::from_config(config, config_dir).map(std::sync::Arc::new)
 }

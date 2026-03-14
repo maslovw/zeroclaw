@@ -9457,7 +9457,7 @@ dependencies = [
 
 [[package]]
 name = "zeroclaw"
-version = "0.1.9"
+version = "0.2.1"
 dependencies = [
  "aho-corasick",
  "anyhow",

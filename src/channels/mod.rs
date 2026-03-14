@@ -6102,7 +6102,10 @@ pub async fn start_channels(config: Config) -> Result<()> {
         message_timeout_secs,
         interrupt_on_new_message,
         multimodal: config.multimodal.clone(),
-        hooks: crate::hooks::create_runner_from_config(&config.hooks),
+        hooks: crate::hooks::create_runner_from_config(
+            &config.hooks,
+            config.config_path.parent().unwrap_or(std::path::Path::new(".")),
+        ),
         non_cli_excluded_tools: Arc::new(Mutex::new(
             config.autonomy.non_cli_excluded_tools.clone(),
         )),

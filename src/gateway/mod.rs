@@ -419,7 +419,8 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
     let config_state = Arc::new(Mutex::new(config.clone()));
 
     // ── Hooks ──────────────────────────────────────────────────────
-    let hooks = crate::hooks::create_runner_from_config(&config.hooks);
+    let config_dir = config.config_path.parent().unwrap_or(std::path::Path::new("."));
+    let hooks = crate::hooks::create_runner_from_config(&config.hooks, config_dir);
 
     let addr: SocketAddr = format!("{host}:{port}").parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;

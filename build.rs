@@ -53,6 +53,26 @@ fn emit_git_rerun_hints(manifest_dir: &str) {
     println!("cargo:rerun-if-changed={}", git_dir.join("refs").display());
 }
 
+fn build_timestamp() -> String {
+    // Try `date -u` first (available on Linux/macOS); fall back to epoch seconds.
+    Command::new("date")
+        .args(["-u", "+%Y-%m-%d %H:%M:%S UTC"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| {
+            format!(
+                "epoch {}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+            )
+        })
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=ZEROCLAW_GIT_SHORT_SHA");
@@ -66,10 +86,11 @@ fn main() {
         .filter(|v| !v.trim().is_empty())
         .or_else(|| git_short_sha(&manifest_dir));
 
-    let build_version = if let Some(sha) = short_sha.as_deref() {
-        format!("{package_version} ({sha})")
-    } else {
-        package_version
+    let build_time = build_timestamp();
+
+    let build_version = match short_sha.as_deref() {
+        Some(sha) => format!("{package_version} ({sha}) built {build_time}"),
+        None => format!("{package_version} built {build_time}"),
     };
 
     println!("cargo:rustc-env=ZEROCLAW_BUILD_VERSION={build_version}");

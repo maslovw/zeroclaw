@@ -2237,7 +2237,20 @@ pub async fn run_models_refresh(
         }
     }
 
-    let api_key = config.api_key.clone().unwrap_or_default();
+    let api_key = config
+        .model_providers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(&provider_name))
+        .and_then(|(_, profile)| {
+            profile
+                .api_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(String::from)
+        })
+        .or_else(|| config.api_key.clone())
+        .unwrap_or_default();
 
     match fetch_live_models_for_provider(&provider_name, &api_key, config.api_url.as_deref()) {
         Ok(models) if !models.is_empty() => {
@@ -2366,8 +2379,121 @@ pub async fn run_models_status(config: &Config) -> Result<()> {
         }
     }
 
+    // Connectivity check for the default provider.
+    print_provider_reachability(provider, config);
+
+    // Configured provider profiles.
+    if !config.model_providers.is_empty() {
+        println!();
+        println!("  Configured providers:");
+        let mut keys: Vec<&String> = config.model_providers.keys().collect();
+        keys.sort();
+        for key in keys {
+            let profile = &config.model_providers[key];
+            let effective_name = profile
+                .name
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .unwrap_or(key.as_str());
+            let profile_api_key = profile
+                .api_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(String::from)
+                .or_else(|| config.api_key.clone())
+                .unwrap_or_default();
+            let has_key = !profile_api_key.is_empty();
+
+            if !supports_live_model_fetch(effective_name) {
+                println!(
+                    "    {:<14} {}",
+                    format!("{}:", key),
+                    style("skip (no live discovery)").dim()
+                );
+                continue;
+            }
+
+            match fetch_live_models_for_provider(
+                effective_name,
+                &profile_api_key,
+                profile.base_url.as_deref(),
+            ) {
+                Ok(models) if !models.is_empty() => {
+                    println!(
+                        "    {:<14} {} ({}key set, {} models)",
+                        format!("{}:", key),
+                        style("OK").green(),
+                        if has_key { "api_" } else { "no " },
+                        models.len()
+                    );
+                }
+                Ok(_) => {
+                    println!(
+                        "    {:<14} {} (empty model list)",
+                        format!("{}:", key),
+                        style("WARN").yellow()
+                    );
+                }
+                Err(e) => {
+                    println!(
+                        "    {:<14} {} ({})",
+                        format!("{}:", key),
+                        style("FAILED").red(),
+                        e
+                    );
+                }
+            }
+        }
+    }
+
     println!();
     Ok(())
+}
+
+fn print_provider_reachability(provider: &str, config: &Config) {
+    if !supports_live_model_fetch(provider) {
+        println!(
+            "  Reachable: {}",
+            style("skip (no live discovery for this provider)").dim()
+        );
+        return;
+    }
+
+    let api_key = config
+        .model_providers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(provider))
+        .and_then(|(_, profile)| {
+            profile
+                .api_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(String::from)
+        })
+        .or_else(|| config.api_key.clone())
+        .unwrap_or_default();
+
+    match fetch_live_models_for_provider(provider, &api_key, config.api_url.as_deref()) {
+        Ok(models) if !models.is_empty() => {
+            println!(
+                "  Reachable: {} ({} models)",
+                style("OK").green(),
+                models.len()
+            );
+        }
+        Ok(_) => {
+            println!(
+                "  Reachable: {} (empty model list)",
+                style("WARN").yellow()
+            );
+        }
+        Err(e) => {
+            println!("  Reachable: {} ({})", style("FAILED").red(), e);
+        }
+    }
 }
 
 pub async fn cached_model_catalog_stats(

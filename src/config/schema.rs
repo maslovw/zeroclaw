@@ -3264,6 +3264,13 @@ pub struct BuiltinHooksConfig {
     /// Enable the session-memory hook (persists session hints between turns).
     #[serde(default)]
     pub session_memory: bool,
+    /// Enable the tool-audit hook (logs full tool args and results).
+    #[serde(default)]
+    pub tool_audit: bool,
+    /// Optional file path for the tool-audit hook to write JSON lines.
+    /// When set, each tool call start/finish is appended as a JSON line.
+    #[serde(default)]
+    pub tool_audit_log: Option<String>,
 }
 
 // ── Plugin system ─────────────────────────────────────────────────────────────

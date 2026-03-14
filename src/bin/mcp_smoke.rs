@@ -44,12 +44,16 @@ async fn main() -> Result<()> {
     }
 
     let registry = zeroclaw::tools::McpRegistry::connect_all(&servers).await?;
-    let tool_count = registry.tool_names().len();
+    let names = registry.tool_names();
     tracing::info!(
         "MCP smoke ok: {} server(s), {} tool(s)",
         registry.server_count(),
-        tool_count
+        names.len()
     );
+
+    for name in &names {
+        println!("  {name}");
+    }
 
     if registry.server_count() == 0 {
         bail!("no MCP servers connected");
