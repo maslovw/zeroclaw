@@ -1341,6 +1341,8 @@ impl TelegramChannel {
             return;
         }
 
+        // Silent deny: never respond to unauthorized users to avoid exposing bot identity.
+        // /bind with a valid pairing code is the only exception — operator gave the code intentionally.
         if let Some(code) = Self::extract_bind_code(text) {
             if let Some(pairing) = self.pairing.as_ref() {
                 match pairing.try_pair(code, &chat_id).await {
@@ -1359,7 +1361,7 @@ impl TelegramChannel {
                                 Ok(()) => {
                                     let _ = self
                                         .send(&SendMessage::new(
-                                            "✅ Telegram account bound successfully. You can talk to ZeroClaw now.",
+                                            "✅ Bound successfully.",
                                             &chat_id,
                                         ))
                                         .await;
@@ -1371,85 +1373,26 @@ impl TelegramChannel {
                                     tracing::error!(
                                         "Telegram: failed to persist allowlist after bind: {e}"
                                     );
-                                    let _ = self
-                                        .send(&SendMessage::new(
-                                            "⚠️ Bound for this runtime, but failed to persist config. Access may be lost after restart; check config file permissions.",
-                                            &chat_id,
-                                        ))
-                                        .await;
                                 }
                             }
-                        } else {
-                            let _ = self
-                                .send(&SendMessage::new(
-                                    "❌ Could not identify your Telegram account. Ensure your account has a username or stable user ID, then retry.",
-                                    &chat_id,
-                                ))
-                                .await;
                         }
                     }
-                    Ok(None) => {
-                        let _ = self
-                            .send(&SendMessage::new(
-                                "❌ Invalid binding code. Ask operator for the latest code and retry.",
-                                &chat_id,
-                            ))
-                            .await;
-                    }
-                    Err(lockout_secs) => {
-                        let _ = self
-                            .send(&SendMessage::new(
-                                format!("⏳ Too many invalid attempts. Retry in {lockout_secs}s."),
-                                &chat_id,
-                            ))
-                            .await;
+                    Ok(None) | Err(_) => {
+                        // Silent: do not reveal bot identity on invalid code or lockout
+                        tracing::debug!(
+                            "Telegram: failed bind attempt from username={username}, sender_id={}",
+                            sender_id_str.as_deref().unwrap_or("unknown")
+                        );
                     }
                 }
-            } else {
-                let _ = self
-                    .send(&SendMessage::new(
-                        "ℹ️ Telegram pairing is not active. Ask operator to add your user ID to channels.telegram.allowed_users in config.toml.",
-                        &chat_id,
-                    ))
-                    .await;
             }
             return;
         }
 
-        tracing::warn!(
-            "Telegram: ignoring message from unauthorized user: username={username}, sender_id={}. \
-Allowlist Telegram username (without '@') or numeric user ID.",
+        tracing::debug!(
+            "Telegram: silently ignoring message from unauthorized user: username={username}, sender_id={}",
             sender_id_str.as_deref().unwrap_or("unknown")
         );
-
-        let suggested_identity = normalized_sender_id
-            .clone()
-            .or_else(|| {
-                if normalized_username.is_empty() || normalized_username == "unknown" {
-                    None
-                } else {
-                    Some(normalized_username.clone())
-                }
-            })
-            .unwrap_or_else(|| "YOUR_TELEGRAM_ID".to_string());
-
-        let _ = self
-            .send(&SendMessage::new(
-                format!(
-                    "🔐 This bot requires operator approval.\n\nCopy this command to operator terminal:\n`zeroclaw channel bind-telegram {suggested_identity}`\n\nAfter operator runs it, send your message again."
-                ),
-                &chat_id,
-            ))
-            .await;
-
-        if self.pairing_code_active() {
-            let _ = self
-                .send(&SendMessage::new(
-                    "ℹ️ If operator provides a one-time pairing code, you can also run `/bind <code>`.",
-                    &chat_id,
-                ))
-                .await;
-        }
     }
 
     /// Get the file path for a Telegram file ID via the Bot API.

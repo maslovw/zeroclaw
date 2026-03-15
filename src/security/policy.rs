@@ -390,9 +390,29 @@ fn contains_unquoted_single_ampersand(command: &str) -> bool {
                     '\'' => quote = QuoteState::Single,
                     '"' => quote = QuoteState::Double,
                     '&' => {
-                        if chars.next_if_eq(&'&').is_none() {
-                            return true;
+                        // && is allowed (logical AND)
+                        if chars.next_if_eq(&'&').is_some() {
+                            continue;
                         }
+                        // &> is a redirect operator (e.g. &>/dev/null), not background
+                        if chars.peek() == Some(&'>') {
+                            continue;
+                        }
+                        // Check if & follows > (part of N>&M fd redirect like 2>&1).
+                        // The preceding > would have already been consumed, so when we
+                        // see & here it's the second char of >&.  Look back in the
+                        // original string to confirm.
+                        // We need the byte position — count chars consumed so far.
+                        // Instead, use a simpler heuristic: if the next char is a
+                        // digit, this is >&N (fd-to-fd redirect).
+                        if chars.peek().map_or(false, |c| c.is_ascii_digit()) {
+                            // consume the digit(s)
+                            while chars.peek().map_or(false, |c| c.is_ascii_digit()) {
+                                chars.next();
+                            }
+                            continue;
+                        }
+                        return true;
                     }
                     _ => {}
                 }
@@ -445,6 +465,117 @@ fn contains_unquoted_char(command: &str, target: char) -> bool {
                 }
             }
         }
+    }
+
+    false
+}
+
+/// Returns `true` when the command contains an unquoted output redirection (`>`)
+/// that is NOT one of these safe patterns:
+///
+/// - `N>&M`         — fd-to-fd redirect (e.g. `2>&1`)
+/// - `>/dev/null`   — discard stdout
+/// - `N>/dev/null`  — discard fd N (e.g. `2>/dev/null`)
+/// - `&>/dev/null`  — discard both stdout+stderr
+///
+/// `>>` (append) is always considered unsafe.
+/// Unquoted `<` is handled separately and remains fully blocked.
+fn contains_unsafe_output_redirect(command: &str) -> bool {
+    let bytes = command.as_bytes();
+    let len = bytes.len();
+    let mut quote = QuoteState::None;
+    let mut escaped = false;
+    let mut i = 0;
+
+    while i < len {
+        let ch = bytes[i] as char;
+
+        match quote {
+            QuoteState::Single => {
+                if ch == '\'' {
+                    quote = QuoteState::None;
+                }
+                i += 1;
+                continue;
+            }
+            QuoteState::Double => {
+                if escaped {
+                    escaped = false;
+                    i += 1;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    i += 1;
+                    continue;
+                }
+                if ch == '"' {
+                    quote = QuoteState::None;
+                }
+                i += 1;
+                continue;
+            }
+            QuoteState::None => {
+                if escaped {
+                    escaped = false;
+                    i += 1;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    i += 1;
+                    continue;
+                }
+                match ch {
+                    '\'' => {
+                        quote = QuoteState::Single;
+                        i += 1;
+                        continue;
+                    }
+                    '"' => {
+                        quote = QuoteState::Double;
+                        i += 1;
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if ch == '>' {
+            let next = i + 1;
+
+            // >> (append) is always unsafe
+            if next < len && bytes[next] == b'>' {
+                return true;
+            }
+
+            // >& pattern: check for fd-to-fd redirect (e.g. 2>&1)
+            if next < len && bytes[next] == b'&' {
+                // N>&M — safe fd-to-fd redirect; skip past it
+                let mut j = next + 1;
+                while j < len && bytes[j].is_ascii_digit() {
+                    j += 1;
+                }
+                i = j;
+                continue;
+            }
+
+            // Check if target is /dev/null (with optional whitespace)
+            let rest = &command[next..];
+            let rest_trimmed = rest.trim_start();
+            if rest_trimmed.starts_with("/dev/null") {
+                let devnull_end =
+                    next + (rest.len() - rest_trimmed.len()) + "/dev/null".len();
+                i = devnull_end;
+                continue;
+            }
+
+            // Any other unquoted > is unsafe
+            return true;
+        }
+
+        i += 1;
     }
 
     false
@@ -886,7 +1017,7 @@ impl SecurityPolicy {
             return Err("command contains disallowed shell expansion syntax".into());
         }
 
-        if contains_unquoted_char(command, '>') || contains_unquoted_char(command, '<') {
+        if contains_unsafe_output_redirect(command) || contains_unquoted_char(command, '<') {
             return Err("command contains disallowed redirection syntax".into());
         }
 
@@ -3182,5 +3313,44 @@ mod tests {
             !policy.is_path_allowed("subdir%2f..%2f..%2fetc"),
             "URL-encoded parent dir traversal must be blocked"
         );
+    }
+
+    #[test]
+    fn safe_stderr_merge_redirect_allowed() {
+        let p = default_policy();
+        assert!(p.is_command_allowed("grep pattern file 2>&1"));
+        assert!(p.is_command_allowed("grep pattern file 2>&1 | head -20"));
+    }
+
+    #[test]
+    fn safe_dev_null_redirect_allowed() {
+        let p = default_policy();
+        assert!(p.is_command_allowed("find . -name '*.log' 2>/dev/null"));
+        assert!(p.is_command_allowed("echo test >/dev/null"));
+        assert!(p.is_command_allowed("echo test &>/dev/null"));
+    }
+
+    #[test]
+    fn unsafe_file_redirect_still_blocked() {
+        let p = default_policy();
+        assert!(!p.is_command_allowed("echo secret > /etc/crontab"));
+        assert!(!p.is_command_allowed("ls >> /tmp/exfil.txt"));
+        assert!(!p.is_command_allowed("echo data > output.txt"));
+        assert!(!p.is_command_allowed("cat > /tmp/file"));
+    }
+
+    #[test]
+    fn safe_redirect_with_spaces_allowed() {
+        let p = default_policy();
+        assert!(p.is_command_allowed("echo test 2> /dev/null"));
+        assert!(p.is_command_allowed("echo test 2>&1"));
+    }
+
+    #[test]
+    fn quoted_redirect_still_safe() {
+        let p = default_policy();
+        // Already passes — ensure we don't regress
+        assert!(p.is_command_allowed("echo \"2>&1\""));
+        assert!(p.is_command_allowed("echo \">/dev/null\""));
     }
 }
