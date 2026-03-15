@@ -2021,6 +2021,21 @@ fn fetch_live_models_for_provider(
     Ok(models)
 }
 
+/// Async wrapper around [`fetch_live_models_for_provider`] that runs the
+/// blocking HTTP calls on the Tokio blocking thread-pool, avoiding the
+/// "cannot drop a runtime in async context" panic from `reqwest::blocking`.
+async fn fetch_live_models_async(
+    provider_name: String,
+    api_key: String,
+    provider_api_url: Option<String>,
+) -> Result<Vec<String>> {
+    tokio::task::spawn_blocking(move || {
+        fetch_live_models_for_provider(&provider_name, &api_key, provider_api_url.as_deref())
+    })
+    .await
+    .context("blocking model-fetch task panicked")?
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ModelCacheEntry {
     provider: String,
@@ -2252,7 +2267,13 @@ pub async fn run_models_refresh(
         .or_else(|| config.api_key.clone())
         .unwrap_or_default();
 
-    match fetch_live_models_for_provider(&provider_name, &api_key, config.api_url.as_deref()) {
+    match fetch_live_models_async(
+        provider_name.clone(),
+        api_key,
+        config.api_url.clone(),
+    )
+    .await
+    {
         Ok(models) if !models.is_empty() => {
             cache_live_models_for_provider(&config.workspace_dir, &provider_name, &models).await?;
             println!(
@@ -2380,7 +2401,7 @@ pub async fn run_models_status(config: &Config) -> Result<()> {
     }
 
     // Connectivity check for the default provider.
-    print_provider_reachability(provider, config);
+    print_provider_reachability(provider, config).await;
 
     // Configured provider profiles.
     if !config.model_providers.is_empty() {
@@ -2415,11 +2436,13 @@ pub async fn run_models_status(config: &Config) -> Result<()> {
                 continue;
             }
 
-            match fetch_live_models_for_provider(
-                effective_name,
-                &profile_api_key,
-                profile.base_url.as_deref(),
-            ) {
+            match fetch_live_models_async(
+                effective_name.to_string(),
+                profile_api_key,
+                profile.base_url.clone(),
+            )
+            .await
+            {
                 Ok(models) if !models.is_empty() => {
                     println!(
                         "    {:<14} {} ({}key set, {} models)",
@@ -2452,7 +2475,7 @@ pub async fn run_models_status(config: &Config) -> Result<()> {
     Ok(())
 }
 
-fn print_provider_reachability(provider: &str, config: &Config) {
+async fn print_provider_reachability(provider: &str, config: &Config) {
     if !supports_live_model_fetch(provider) {
         println!(
             "  Reachable: {}",
@@ -2476,7 +2499,13 @@ fn print_provider_reachability(provider: &str, config: &Config) {
         .or_else(|| config.api_key.clone())
         .unwrap_or_default();
 
-    match fetch_live_models_for_provider(provider, &api_key, config.api_url.as_deref()) {
+    match fetch_live_models_async(
+        provider.to_string(),
+        api_key,
+        config.api_url.clone(),
+    )
+    .await
+    {
         Ok(models) if !models.is_empty() => {
             println!(
                 "  Reachable: {} ({} models)",
@@ -3360,11 +3389,13 @@ async fn setup_provider(workspace_dir: &Path) -> Result<(String, String, String,
                 .interact()?;
 
             if should_fetch_now {
-                match fetch_live_models_for_provider(
-                    provider_name,
-                    &api_key,
-                    provider_api_url.as_deref(),
-                ) {
+                match fetch_live_models_async(
+                    provider_name.to_string(),
+                    api_key.clone(),
+                    provider_api_url.clone(),
+                )
+                .await
+                {
                     Ok(live_model_ids) if !live_model_ids.is_empty() => {
                         cache_live_models_for_provider(
                             workspace_dir,
