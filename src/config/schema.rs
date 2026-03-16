@@ -758,6 +758,16 @@ pub struct McpConfig {
     /// Configured MCP servers.
     #[serde(default, alias = "mcpServers")]
     pub servers: Vec<McpServerConfig>,
+    /// Idle timeout in seconds before disconnecting MCP servers.
+    /// Servers reconnect automatically on the next tool call.
+    /// Set to 0 to keep servers connected permanently (eager mode).
+    /// Default: 90 seconds.
+    #[serde(default = "default_mcp_idle_timeout_secs")]
+    pub idle_timeout_secs: u64,
+}
+
+fn default_mcp_idle_timeout_secs() -> u64 {
+    90
 }
 
 // ── Agents IPC ──────────────────────────────────────────────────

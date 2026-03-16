@@ -1,6 +1,9 @@
 //! MCP (Model Context Protocol) client — connects to external tool servers.
 //!
 //! Supports multiple transports: stdio (spawn local process), HTTP, and SSE.
+//! Servers are lazy-loaded: connected at startup for tool discovery, then
+//! disconnected. Reconnected on-demand when a tool is called, and automatically
+//! disconnected after an idle timeout.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -9,7 +12,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::json;
 use tokio::sync::Mutex;
-use tokio::time::{timeout, Duration};
+use tokio::time::{timeout, Duration, Instant};
 
 use crate::config::schema::McpServerConfig;
 use crate::tools::mcp_protocol::{
@@ -27,18 +30,29 @@ const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 180;
 /// Maximum allowed tool call timeout (seconds) — hard safety ceiling.
 const MAX_TOOL_TIMEOUT_SECS: u64 = 600;
 
+/// Default idle timeout (seconds) before disconnecting an MCP server.
+const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 90;
+
+/// How often the idle reaper checks for stale connections (seconds).
+const IDLE_CHECK_INTERVAL_SECS: u64 = 15;
+
 // ── Internal server state ──────────────────────────────────────────────────
 
 struct McpServerInner {
     config: McpServerConfig,
-    transport: Box<dyn McpTransportConn>,
+    /// None when disconnected (lazy/idle), Some when connected.
+    transport: Option<Box<dyn McpTransportConn>>,
     next_id: AtomicU64,
+    /// Tool definitions — persisted across disconnect/reconnect cycles.
     tools: Vec<McpToolDef>,
+    /// Last time a tool call completed. Used for idle detection.
+    last_activity: Option<Instant>,
 }
 
 // ── McpServer ──────────────────────────────────────────────────────────────
 
-/// A live connection to one MCP server (any transport).
+/// A connection to one MCP server (any transport).
+/// Supports lazy connect/disconnect lifecycle.
 #[derive(Clone)]
 pub struct McpServer {
     inner: Arc<Mutex<McpServerInner>>,
@@ -47,8 +61,33 @@ pub struct McpServer {
 impl McpServer {
     /// Connect to the server, perform the initialize handshake, and fetch the tool list.
     pub async fn connect(config: McpServerConfig) -> Result<Self> {
-        // Create transport based on config
-        let mut transport = create_transport(&config).with_context(|| {
+        let (transport, tools) = Self::do_connect(&config).await?;
+        let tool_count = tools.len();
+
+        let inner = McpServerInner {
+            config,
+            transport: Some(transport),
+            next_id: AtomicU64::new(3), // Start at 3 since we used 1 and 2
+            tools,
+            last_activity: Some(Instant::now()),
+        };
+
+        tracing::info!(
+            "MCP server `{}` connected — {} tool(s) available",
+            inner.config.name,
+            tool_count
+        );
+
+        Ok(Self {
+            inner: Arc::new(Mutex::new(inner)),
+        })
+    }
+
+    /// Perform the full connect + init + tools/list handshake. Returns transport and tool list.
+    async fn do_connect(
+        config: &McpServerConfig,
+    ) -> Result<(Box<dyn McpTransportConn>, Vec<McpToolDef>)> {
+        let mut transport = create_transport(config).with_context(|| {
             format!(
                 "failed to create transport for MCP server `{}`",
                 config.name
@@ -56,9 +95,8 @@ impl McpServer {
         })?;
 
         // Initialize handshake
-        let id = 1u64;
         let init_req = JsonRpcRequest::new(
-            id,
+            1u64,
             "initialize",
             json!({
                 "protocolVersion": MCP_PROTOCOL_VERSION,
@@ -90,15 +128,12 @@ impl McpServer {
             );
         }
 
-        // Notify server that client is initialized (no response expected for notifications)
-        // For notifications, we send but don't wait for response
+        // Notify server that client is initialized
         let notif = JsonRpcRequest::notification("notifications/initialized", json!({}));
-        // Best effort - ignore errors for notifications
         let _ = transport.send_and_recv(&notif).await;
 
         // Fetch available tools
-        let id = 2u64;
-        let list_req = JsonRpcRequest::new(id, "tools/list", json!({}));
+        let list_req = JsonRpcRequest::new(2u64, "tools/list", json!({}));
 
         let list_resp = timeout(
             Duration::from_secs(RECV_TIMEOUT_SECS),
@@ -118,24 +153,98 @@ impl McpServer {
         let tool_list: McpToolsListResult = serde_json::from_value(result)
             .with_context(|| format!("failed to parse tools/list from `{}`", config.name))?;
 
-        let tool_count = tool_list.tools.len();
+        Ok((transport, tool_list.tools))
+    }
 
-        let inner = McpServerInner {
-            config,
-            transport,
-            next_id: AtomicU64::new(3), // Start at 3 since we used 1 and 2
-            tools: tool_list.tools,
-        };
+    /// Reconnect a disconnected server. Performs init handshake but reuses
+    /// cached tool definitions (skips tools/list on reconnect).
+    async fn ensure_connected(inner: &mut McpServerInner) -> Result<()> {
+        if inner.transport.is_some() {
+            return Ok(());
+        }
 
         tracing::info!(
-            "MCP server `{}` connected — {} tool(s) available",
-            inner.config.name,
-            tool_count
+            "MCP server `{}` reconnecting on demand...",
+            inner.config.name
         );
 
-        Ok(Self {
-            inner: Arc::new(Mutex::new(inner)),
-        })
+        let mut transport = create_transport(&inner.config).with_context(|| {
+            format!(
+                "failed to create transport for MCP server `{}`",
+                inner.config.name
+            )
+        })?;
+
+        // Init handshake (required for each new connection)
+        let init_req = JsonRpcRequest::new(
+            1u64,
+            "initialize",
+            json!({
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "zeroclaw",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            }),
+        );
+
+        let init_resp = timeout(
+            Duration::from_secs(RECV_TIMEOUT_SECS),
+            transport.send_and_recv(&init_req),
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "MCP server `{}` timed out during reconnect init",
+                inner.config.name
+            )
+        })??;
+
+        if init_resp.error.is_some() {
+            bail!(
+                "MCP server `{}` rejected initialize on reconnect: {:?}",
+                inner.config.name,
+                init_resp.error
+            );
+        }
+
+        let notif = JsonRpcRequest::notification("notifications/initialized", json!({}));
+        let _ = transport.send_and_recv(&notif).await;
+
+        inner.transport = Some(transport);
+        inner.next_id = AtomicU64::new(3);
+
+        tracing::info!("MCP server `{}` reconnected", inner.config.name);
+        Ok(())
+    }
+
+    /// Disconnect the transport (drop the process / close the connection).
+    pub async fn disconnect(&self) {
+        let mut inner = self.inner.lock().await;
+        if let Some(mut transport) = inner.transport.take() {
+            let name = inner.config.name.clone();
+            let _ = transport.close().await;
+            inner.last_activity = None;
+            tracing::info!("MCP server `{name}` disconnected (idle)");
+        }
+    }
+
+    /// Check whether this server has been idle longer than the given duration.
+    pub async fn is_idle(&self, idle_timeout: Duration) -> bool {
+        let inner = self.inner.lock().await;
+        if inner.transport.is_none() {
+            return false; // already disconnected
+        }
+        match inner.last_activity {
+            Some(last) => last.elapsed() > idle_timeout,
+            None => true, // connected but never used — disconnect
+        }
+    }
+
+    /// Whether the server currently has a live transport.
+    pub async fn is_connected(&self) -> bool {
+        self.inner.lock().await.transport.is_some()
     }
 
     /// Tools advertised by this server.
@@ -149,12 +258,17 @@ impl McpServer {
     }
 
     /// Call a tool on this server. Returns the raw JSON result.
+    /// Reconnects automatically if the server is disconnected.
     pub async fn call_tool(
         &self,
         tool_name: &str,
         arguments: serde_json::Value,
     ) -> Result<serde_json::Value> {
         let mut inner = self.inner.lock().await;
+
+        // Lazy reconnect if disconnected
+        Self::ensure_connected(&mut inner).await?;
+
         let id = inner.next_id.fetch_add(1, Ordering::Relaxed);
         let req = JsonRpcRequest::new(
             id,
@@ -170,9 +284,14 @@ impl McpServer {
             .unwrap_or(DEFAULT_TOOL_TIMEOUT_SECS)
             .min(MAX_TOOL_TIMEOUT_SECS);
 
+        let transport = inner
+            .transport
+            .as_mut()
+            .expect("transport must be Some after ensure_connected");
+
         let resp = timeout(
             Duration::from_secs(tool_timeout),
-            inner.transport.send_and_recv(&req),
+            transport.send_and_recv(&req),
         )
         .await
         .map_err(|_| {
@@ -189,6 +308,9 @@ impl McpServer {
             )
         })?;
 
+        // Update activity timestamp after successful call
+        inner.last_activity = Some(Instant::now());
+
         if let Some(err) = resp.error {
             bail!("MCP tool `{tool_name}` error {}: {}", err.code, err.message);
         }
@@ -199,15 +321,19 @@ impl McpServer {
 // ── McpRegistry ───────────────────────────────────────────────────────────
 
 /// Registry of all connected MCP servers, with a flat tool index.
+/// Supports lazy lifecycle: servers are disconnected after idle timeout
+/// and reconnected on-demand when a tool is called.
 pub struct McpRegistry {
     servers: Vec<McpServer>,
     /// prefixed_name → (server_index, original_tool_name)
     tool_index: HashMap<String, (usize, String)>,
+    /// Idle timeout duration. Zero means never disconnect.
+    idle_timeout: Duration,
 }
 
 impl McpRegistry {
     /// Connect to all configured servers. Non-fatal: failures are logged and skipped.
-    pub async fn connect_all(configs: &[McpServerConfig]) -> Result<Self> {
+    pub async fn connect_all(configs: &[McpServerConfig], idle_timeout_secs: u64) -> Result<Self> {
         let mut servers = Vec::new();
         let mut tool_index = HashMap::new();
 
@@ -226,15 +352,62 @@ impl McpRegistry {
                 }
                 // Non-fatal — log and continue with remaining servers
                 Err(e) => {
-                    tracing::error!("Failed to connect to MCP server `{}`: {:#}", config.name, e);
+                    tracing::error!(
+                        "Failed to connect to MCP server `{}`: {:#}",
+                        config.name,
+                        e
+                    );
                 }
             }
         }
 
+        let idle_timeout = Duration::from_secs(idle_timeout_secs);
+
         Ok(Self {
             servers,
             tool_index,
+            idle_timeout,
         })
+    }
+
+    /// Disconnect all servers immediately. Used after initial tool discovery
+    /// when lazy mode is active.
+    pub async fn disconnect_all(&self) {
+        for server in &self.servers {
+            server.disconnect().await;
+        }
+        tracing::info!("MCP: all servers disconnected (lazy mode — will reconnect on demand)");
+    }
+
+    /// Disconnect servers that have been idle longer than the configured timeout.
+    pub async fn disconnect_idle(&self) {
+        if self.idle_timeout.is_zero() {
+            return;
+        }
+        for server in &self.servers {
+            if server.is_idle(self.idle_timeout).await {
+                server.disconnect().await;
+            }
+        }
+    }
+
+    /// Spawn a background task that periodically checks for idle servers
+    /// and disconnects them. Returns a `JoinHandle` that can be aborted on shutdown.
+    pub fn spawn_idle_reaper(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        let registry = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut interval =
+                tokio::time::interval(Duration::from_secs(IDLE_CHECK_INTERVAL_SECS));
+            loop {
+                interval.tick().await;
+                registry.disconnect_idle().await;
+            }
+        })
+    }
+
+    /// Whether lazy lifecycle is enabled (idle_timeout > 0).
+    pub fn is_lazy(&self) -> bool {
+        !self.idle_timeout.is_zero()
     }
 
     /// All prefixed tool names across all connected servers.
@@ -326,7 +499,7 @@ mod tests {
             url: None,
             headers: std::collections::HashMap::default(),
         }];
-        let registry = McpRegistry::connect_all(&configs)
+        let registry = McpRegistry::connect_all(&configs, 0)
             .await
             .expect("connect_all should not fail");
         assert!(registry.is_empty());

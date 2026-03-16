@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
         bail!("MCP is disabled or no servers configured");
     }
 
-    let registry = zeroclaw::tools::McpRegistry::connect_all(&servers).await?;
+    let registry = zeroclaw::tools::McpRegistry::connect_all(&servers, 0).await?;
     let names = registry.tool_names();
     tracing::info!(
         "MCP smoke ok: {} server(s), {} tool(s)",
