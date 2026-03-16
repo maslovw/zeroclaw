@@ -23,7 +23,8 @@ pub use schema::{
     ProviderConfig, ProxyConfig, ProxyScope, QdrantConfig, QueryClassificationConfig,
     ReliabilityConfig, ResearchPhaseConfig, ResearchTrigger, ResourceLimitsConfig, RuntimeConfig,
     SandboxBackend, SandboxConfig, SchedulerConfig, SecretsConfig, SecurityConfig,
-    SecurityRoleConfig, SkillsConfig, SkillsPromptInjectionMode, SlackConfig, StorageConfig,
+    SecurityRoleConfig, SkillsConfig, SkillsPromptInjectionMode, SlashCommandsConfig, SlackConfig,
+    StorageConfig,
     StorageProviderConfig, StorageProviderSection, StreamMode, SubAgentsConfig,
     SyscallAnomalyConfig, TelegramConfig, TranscriptionConfig, TunnelConfig, UrlAccessConfig,
     WasmCapabilityEscalationMode, WasmConfig, WasmModuleHashPolicy, WasmRuntimeConfig,
@@ -60,6 +61,7 @@ mod tests {
             group_reply: None,
             base_url: None,
             ack_enabled: true,
+            slash_commands: SlashCommandsConfig::default(),
         };
 
         let discord = DiscordConfig {

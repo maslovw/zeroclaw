@@ -1,7 +1,7 @@
 use crate::config::schema::{CloudflareTunnelConfig, NgrokTunnelConfig};
 use crate::config::{
     default_model_fallback_for_provider, ChannelsConfig, Config, DiscordConfig, ProgressMode,
-    StreamMode, TelegramConfig, TunnelConfig,
+    SlashCommandsConfig, StreamMode, TelegramConfig, TunnelConfig,
 };
 use crate::onboard::wizard::{run_quick_setup_with_migration, OpenClawOnboardMigrationOptions};
 use anyhow::{bail, Context, Result};
@@ -2280,6 +2280,7 @@ fn apply_channel_overrides(config: &mut Config, plan: &TuiOnboardPlan) {
             group_reply: None,
             base_url: None,
             ack_enabled: true,
+            slash_commands: SlashCommandsConfig::default(),
         });
     }
 

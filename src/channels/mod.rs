@@ -5257,7 +5257,8 @@ fn collect_configured_channels(
         .with_ack_reaction(config.channels_config.ack_reaction.telegram.clone())
         .with_streaming(tg.stream_mode, tg.draft_update_interval_ms)
         .with_transcription(config.transcription.clone())
-        .with_workspace_dir(config.workspace_dir.clone());
+        .with_workspace_dir(config.workspace_dir.clone())
+        .with_slash_commands(tg.slash_commands.clone());
 
         if let Some(ref base_url) = tg.base_url {
             telegram = telegram.with_api_base(base_url.clone());

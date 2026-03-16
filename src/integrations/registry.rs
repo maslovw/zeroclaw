@@ -996,8 +996,8 @@ pub fn all_integrations() -> Vec<IntegrationEntry> {
 mod tests {
     use super::*;
     use crate::config::schema::{
-        IMessageConfig, MatrixConfig, NextcloudTalkConfig, NostrConfig, ProgressMode, StreamMode,
-        TelegramConfig,
+        IMessageConfig, MatrixConfig, NextcloudTalkConfig, NostrConfig, ProgressMode,
+        SlashCommandsConfig, StreamMode, TelegramConfig,
     };
     use crate::config::Config;
 
@@ -1069,6 +1069,7 @@ mod tests {
             ack_enabled: true,
             group_reply: None,
             base_url: None,
+            slash_commands: SlashCommandsConfig::default(),
         });
         let entries = all_integrations();
         let tg = entries.iter().find(|e| e.name == "Telegram").unwrap();

@@ -4929,6 +4929,38 @@ fn clone_group_reply_allowed_sender_ids(group_reply: Option<&GroupReplyConfig>) 
         .unwrap_or_default()
 }
 
+/// Slash command settings for channels that support them (e.g. /shell).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SlashCommandsConfig {
+    /// Shell command timeout in seconds. Default: 30.
+    #[serde(default = "default_slash_timeout_secs")]
+    pub timeout_secs: u64,
+    /// Include stdout in response. Default: true.
+    #[serde(default = "default_true")]
+    pub stdout: bool,
+    /// Include stderr in response. Default: true.
+    #[serde(default = "default_true")]
+    pub stderr: bool,
+    /// Include exit code in response. Default: true.
+    #[serde(default = "default_true")]
+    pub return_code: bool,
+}
+
+impl Default for SlashCommandsConfig {
+    fn default() -> Self {
+        Self {
+            timeout_secs: default_slash_timeout_secs(),
+            stdout: true,
+            stderr: true,
+            return_code: true,
+        }
+    }
+}
+
+fn default_slash_timeout_secs() -> u64 {
+    30
+}
+
 /// Telegram bot channel configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TelegramConfig {
@@ -4965,6 +4997,9 @@ pub struct TelegramConfig {
     /// When false, no reaction is sent. Default is true.
     #[serde(default = "default_ack_enabled")]
     pub ack_enabled: bool,
+    /// Slash command settings (e.g. /shell).
+    #[serde(default)]
+    pub slash_commands: SlashCommandsConfig,
 }
 
 impl ChannelConfig for TelegramConfig {
@@ -9953,6 +9988,7 @@ mod tests {
             ack_enabled: true,
             group_reply: None,
             base_url: None,
+            slash_commands: SlashCommandsConfig::default(),
         });
         config.agents.insert(
             "worker".into(),
@@ -10466,6 +10502,7 @@ ws_url = "ws://127.0.0.1:3002"
                     ack_enabled: true,
                     group_reply: None,
                     base_url: None,
+                    slash_commands: SlashCommandsConfig::default(),
                 }),
                 discord: None,
                 slack: None,
@@ -10965,6 +11002,7 @@ denied_tools = ["shell"]
             ack_enabled: true,
             group_reply: None,
             base_url: None,
+            slash_commands: SlashCommandsConfig::default(),
         });
 
         config.agents.insert(
@@ -11163,6 +11201,7 @@ denied_tools = ["shell"]
             ack_enabled: true,
             group_reply: None,
             base_url: None,
+            slash_commands: SlashCommandsConfig::default(),
         };
         let json = serde_json::to_string(&tc).unwrap();
         let parsed: TelegramConfig = serde_json::from_str(&json).unwrap();

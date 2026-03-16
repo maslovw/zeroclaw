@@ -477,6 +477,7 @@ pub struct TelegramChannel {
     /// Whether to send emoji reaction acknowledgments to incoming messages.
     ack_enabled: bool,
     ack_reaction: Option<AckReactionConfig>,
+    slash_commands: crate::config::SlashCommandsConfig,
 }
 
 impl TelegramChannel {
@@ -517,6 +518,7 @@ impl TelegramChannel {
             workspace_dir: None,
             ack_reaction: None,
             ack_enabled,
+            slash_commands: crate::config::SlashCommandsConfig::default(),
         }
     }
 
@@ -568,6 +570,12 @@ impl TelegramChannel {
     /// Enable or disable emoji reaction acknowledgments to incoming messages.
     pub fn with_ack_enabled(mut self, enabled: bool) -> Self {
         self.ack_enabled = enabled;
+        self
+    }
+
+    /// Configure slash command settings (e.g. /shell timeout, output flags).
+    pub fn with_slash_commands(mut self, config: crate::config::SlashCommandsConfig) -> Self {
+        self.slash_commands = config;
         self
     }
 
@@ -1115,40 +1123,75 @@ impl TelegramChannel {
     }
 
     /// Register bot commands with Telegram's `setMyCommands` API so they
-    /// appear in the command menu for users. Called once on startup.
+    /// appear in the command menu only for allowed users. Strangers see no
+    /// commands at all, preventing bot identity exposure.
     async fn register_commands(&self) -> anyhow::Result<()> {
         let url = self.api_url("setMyCommands");
-        let body = serde_json::json!({
-            "commands": [
-                { "command": "new", "description": "Start a new conversation" },
-                { "command": "model", "description": "Show or switch the current model" },
-                { "command": "models", "description": "Show or switch the current provider" },
-            ]
-        });
+        let commands = serde_json::json!([
+            { "command": "new", "description": "Start a new conversation" },
+            { "command": "model", "description": "Show or switch the current model" },
+            { "command": "models", "description": "Show or switch the current provider" },
+            { "command": "shell", "description": "Execute a shell command" },
+        ]);
 
-        let resp = self.http_client().post(&url).json(&body).send().await?;
+        // Clear default-scope commands so strangers see an empty menu.
+        let clear_body = serde_json::json!({ "commands": [] });
+        let _ = self.http_client().post(&url).json(&clear_body).send().await;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            // Only log Telegram's error_code and description, not the full body
-            let detail = serde_json::from_str::<serde_json::Value>(&text)
-                .ok()
-                .and_then(|v| {
-                    let code = v.get("error_code");
-                    let desc = v.get("description").and_then(|d| d.as_str());
-                    match (code, desc) {
-                        (Some(c), Some(d)) => Some(format!("error_code={c}, description={d}")),
-                        (_, Some(d)) => Some(format!("description={d}")),
-                        _ => None,
-                    }
-                })
-                .unwrap_or_else(|| "no parseable error detail".to_string());
-            tracing::warn!("setMyCommands failed: status={status}, {detail}");
-        } else {
-            tracing::info!("Telegram bot commands registered successfully");
+        // Register commands per allowed user via BotCommandScopeChat.
+        let users = self
+            .allowed_users
+            .read()
+            .map(|u| u.clone())
+            .unwrap_or_default();
+
+        let mut registered = 0u32;
+        for user in &users {
+            if user == "*" {
+                // Wildcard: fall back to default scope for all users.
+                let body = serde_json::json!({ "commands": commands });
+                let resp = self.http_client().post(&url).json(&body).send().await?;
+                if resp.status().is_success() {
+                    tracing::info!("Telegram bot commands registered for all users (wildcard)");
+                }
+                return Ok(());
+            }
+
+            // Telegram BotCommandScopeChat requires a numeric chat_id.
+            // allowed_users may contain usernames — skip those since Telegram
+            // doesn't support BotCommandScopeChat with usernames.
+            if !user.chars().all(|c| c.is_ascii_digit()) {
+                tracing::debug!(
+                    "Telegram: skipping command registration for non-numeric identity: {user}"
+                );
+                continue;
+            }
+
+            let body = serde_json::json!({
+                "commands": commands,
+                "scope": { "type": "chat", "chat_id": user.parse::<i64>().unwrap_or(0) },
+            });
+            let resp = self.http_client().post(&url).json(&body).send().await?;
+
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                let detail = serde_json::from_str::<serde_json::Value>(&text)
+                    .ok()
+                    .and_then(|v| {
+                        let desc = v.get("description").and_then(|d| d.as_str());
+                        desc.map(|d| d.to_string())
+                    })
+                    .unwrap_or_else(|| "no detail".to_string());
+                tracing::warn!(
+                    "setMyCommands failed for chat_id={user}: status={status}, {detail}"
+                );
+            } else {
+                registered += 1;
+            }
         }
 
+        tracing::info!("Telegram bot commands registered for {registered} user(s)");
         Ok(())
     }
 
@@ -2853,6 +2896,56 @@ impl TelegramChannel {
         self.send_media_by_url("sendVoice", "voice", chat_id, thread_id, url, caption)
             .await
     }
+    /// Execute a raw shell command and send the output back to the chat.
+    /// Only reachable by authorized users (parse_update_message gates access).
+    async fn handle_shell_command(&self, command: &str, reply_target: &str) {
+        use tokio::process::Command;
+
+        let timeout = std::time::Duration::from_secs(self.slash_commands.timeout_secs);
+
+        let result = tokio::time::timeout(
+            timeout,
+            Command::new("sh").arg("-c").arg(command).output(),
+        )
+        .await;
+
+        let (chat_id, thread_id) = Self::parse_reply_target(reply_target);
+
+        let response = match result {
+            Ok(Ok(output)) => {
+                let mut parts = Vec::new();
+                if self.slash_commands.return_code {
+                    parts.push(format!(
+                        "exit: {}",
+                        output.status.code().unwrap_or(-1)
+                    ));
+                }
+                if self.slash_commands.stdout {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    if !stdout.trim().is_empty() {
+                        parts.push(format!("STDOUT:\n{}", stdout.trim_end()));
+                    }
+                }
+                if self.slash_commands.stderr {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    if !stderr.trim().is_empty() {
+                        parts.push(format!("STDERR:\n{}", stderr.trim_end()));
+                    }
+                }
+                if parts.is_empty() {
+                    "done".to_string()
+                } else {
+                    parts.join("\n")
+                }
+            }
+            Ok(Err(e)) => format!("error: {e}"),
+            Err(_) => format!("timeout after {}s", self.slash_commands.timeout_secs),
+        };
+
+        let _ = self
+            .send_text_chunks(&response, &chat_id, thread_id.as_deref())
+            .await;
+    }
 }
 
 #[async_trait]
@@ -3503,6 +3596,29 @@ Ensure only one `zeroclaw` process is using this bot token."
                     // Advance offset past this update
                     if let Some(uid) = update.get("update_id").and_then(serde_json::Value::as_i64) {
                         offset = uid + 1;
+                    }
+
+                    // Intercept /shell before agent loop — check raw text
+                    // (m.content may have reply-context quotes prepended).
+                    if let Some(raw_text) = update
+                        .get("message")
+                        .and_then(|msg| msg.get("text"))
+                        .and_then(serde_json::Value::as_str)
+                    {
+                        let shell_cmd = raw_text
+                            .strip_prefix("/shell ")
+                            .or_else(|| {
+                                raw_text.strip_prefix("/shell@").and_then(|rest| {
+                                    rest.split_once(' ').map(|(_, c)| c)
+                                })
+                            });
+                        if let Some(cmd) = shell_cmd {
+                            if let Some(m) = self.parse_update_message(update) {
+                                self.handle_shell_command(cmd.trim(), &m.reply_target)
+                                    .await;
+                                continue;
+                            }
+                        }
                     }
 
                     let msg = if let Some(m) = self.parse_update_message(update) {

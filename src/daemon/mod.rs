@@ -693,6 +693,7 @@ mod tests {
             ack_enabled: true,
             group_reply: None,
             base_url: None,
+            slash_commands: crate::config::SlashCommandsConfig::default(),
         });
         assert!(has_supervised_channels(&config));
     }
@@ -926,6 +927,7 @@ mod tests {
             ack_enabled: true,
             group_reply: None,
             base_url: None,
+            slash_commands: crate::config::SlashCommandsConfig::default(),
         });
 
         let target = heartbeat_delivery_target(&config).unwrap();

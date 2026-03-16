@@ -7,7 +7,8 @@ use crate::config::{
     AutonomyConfig, BrowserConfig, ChannelsConfig, ComposioConfig, Config, DiscordConfig,
     HeartbeatConfig, HttpRequestConfig, HttpRequestCredentialProfile, IMessageConfig,
     IdentityConfig, LarkConfig, MatrixConfig, MemoryConfig, ObservabilityConfig, RuntimeConfig,
-    SecretsConfig, SlackConfig, StorageConfig, TelegramConfig, WebFetchConfig, WebSearchConfig,
+    SecretsConfig, SlackConfig, SlashCommandsConfig, StorageConfig, TelegramConfig, WebFetchConfig,
+    WebSearchConfig,
     WebhookConfig,
 };
 use crate::hardware::{self, HardwareConfig};
@@ -4868,6 +4869,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     group_reply: None,
                     base_url: None,
                     ack_enabled: true,
+                    slash_commands: SlashCommandsConfig::default(),
                 });
             }
             ChannelMenuChoice::Discord => {

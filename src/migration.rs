@@ -1310,7 +1310,8 @@ fn backup_target_config(config_path: &Path) -> Result<Option<PathBuf>> {
 mod tests {
     use super::*;
     use crate::config::{
-        Config, DelegateAgentConfig, MemoryConfig, ProgressMode, StreamMode, TelegramConfig,
+        Config, DelegateAgentConfig, MemoryConfig, ProgressMode, SlashCommandsConfig, StreamMode,
+        TelegramConfig,
     };
     use crate::memory::{Memory, SqliteMemory};
     use rusqlite::params;
@@ -1480,6 +1481,7 @@ mod tests {
             ack_enabled: true,
             group_reply: None,
             base_url: None,
+            slash_commands: SlashCommandsConfig::default(),
         });
         config.agents.insert(
             "researcher".to_string(),
