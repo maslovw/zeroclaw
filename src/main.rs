@@ -646,9 +646,9 @@ enum EstopSubcommands {
 
 #[derive(Subcommand, Debug)]
 enum AuthCommands {
-    /// Login with OAuth (OpenAI Codex or Gemini)
+    /// Login with OAuth (OpenAI Codex, Gemini, or Copilot)
     Login {
-        /// Provider (`openai-codex` or `gemini`)
+        /// Provider (`openai-codex`, `gemini`, or `copilot`)
         #[arg(long)]
         provider: String,
         /// Profile name (default: default)
@@ -2346,9 +2346,15 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
                     println!("Active profile for openai-codex: {profile}");
                     Ok(())
                 }
+                "copilot" | "github-copilot" => {
+                    println!("Starting GitHub Copilot device-code authentication...");
+                    crate::providers::copilot::CopilotProvider::cli_device_code_login().await?;
+                    println!("Active provider: copilot");
+                    Ok(())
+                }
                 _ => {
                     bail!(
-                        "`auth login` supports --provider openai-codex or gemini, got: {provider}"
+                        "`auth login` supports --provider openai-codex, gemini, or copilot, got: {provider}"
                     );
                 }
             }

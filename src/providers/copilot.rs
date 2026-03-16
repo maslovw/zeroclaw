@@ -500,6 +500,29 @@ impl CopilotProvider {
         Ok(token)
     }
 
+    /// Run GitHub OAuth device code flow from CLI (`auth login --provider copilot`).
+    /// Returns the GitHub access token and caches it to disk.
+    pub async fn cli_device_code_login() -> anyhow::Result<String> {
+        let provider = Self::new(None);
+        let token = provider.device_code_login().await?;
+        let access_token_path = provider.token_dir.join("access-token");
+        write_file_secure(&access_token_path, &token).await;
+
+        // Verify the token works by exchanging for a Copilot API key.
+        match provider.exchange_for_api_key(&token).await {
+            Ok(info) => {
+                provider.save_api_key_to_disk(&info).await;
+                println!("Copilot API key obtained and cached. Ready to use.");
+            }
+            Err(e) => {
+                println!("Warning: GitHub token saved but Copilot API key exchange failed: {e}");
+                println!("Ensure your GitHub account has an active Copilot subscription.");
+            }
+        }
+
+        Ok(token)
+    }
+
     /// Run GitHub OAuth device code flow.
     async fn device_code_login(&self) -> anyhow::Result<String> {
         let response: DeviceCodeResponse = self
