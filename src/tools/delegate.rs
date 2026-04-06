@@ -38,6 +38,31 @@ pub enum BackgroundTaskStatus {
     Cancelled,
 }
 
+/// Load an optional workspace agent prompt from `<workspace_dir>/agents/<agent_name>.md`.
+///
+/// Returns `None` when the file does not exist or cannot be read. The workspace
+/// prompt is appended to the config-level system prompt so that workspace authors
+/// can layer additional instructions per agent without touching config.
+fn load_workspace_agent_prompt(
+    workspace_dir: &std::path::Path,
+    agent_name: &str,
+) -> Option<String> {
+    let path = workspace_dir.join("agents").join(format!("{agent_name}.md"));
+    match std::fs::read_to_string(&path) {
+        Ok(contents) if !contents.trim().is_empty() => {
+            tracing::debug!(
+                agent = agent_name,
+                path = %path.display(),
+                "loaded workspace agent prompt ({} bytes)",
+                contents.len(),
+            );
+            Some(contents)
+        }
+        Ok(_) => None,
+        Err(_) => None,
+    }
+}
+
 /// Tool that delegates a subtask to a named agent with a different
 /// provider/model configuration. Enables multi-agent workflows where
 /// a primary agent can hand off specialized work (research, coding,
@@ -480,7 +505,7 @@ impl DelegateTool {
 
         // Build enriched system prompt for non-agentic sub-agent.
         let enriched_system_prompt =
-            self.build_enriched_system_prompt(agent_config, &[], &self.workspace_dir);
+            self.build_enriched_system_prompt(agent_config, &[], &self.workspace_dir, agent_name);
         let system_prompt_ref = enriched_system_prompt.as_deref();
 
         // Wrap the provider call in a timeout to prevent indefinite blocking
@@ -1018,6 +1043,7 @@ impl DelegateTool {
         agent_config: &DelegateAgentConfig,
         sub_tools: &[Box<dyn Tool>],
         workspace_dir: &Path,
+        agent_name: &str,
     ) -> Option<String> {
         // Resolve skills directory: scoped if configured, otherwise workspace default.
         let skills_dir = agent_config
@@ -1073,6 +1099,14 @@ impl DelegateTool {
         // Append the operator-configured system_prompt as the identity/role block.
         if let Some(operator_prompt) = agent_config.system_prompt.as_ref() {
             enriched.push_str(operator_prompt);
+            enriched.push('\n');
+        }
+
+        // Layer workspace agent prompt from `<workspace_dir>/agents/<agent_name>.md`
+        // so workspace authors can add per-agent instructions without touching config.
+        if let Some(ws_prompt) = load_workspace_agent_prompt(workspace_dir, agent_name) {
+            enriched.push('\n');
+            enriched.push_str(&ws_prompt);
             enriched.push('\n');
         }
 
@@ -1132,7 +1166,7 @@ impl DelegateTool {
 
         // Build enriched system prompt with tools, skills, workspace, datetime context.
         let enriched_system_prompt =
-            self.build_enriched_system_prompt(agent_config, &sub_tools, &self.workspace_dir);
+            self.build_enriched_system_prompt(agent_config, &sub_tools, &self.workspace_dir, agent_name);
 
         let mut history = Vec::new();
         if let Some(system_prompt) = enriched_system_prompt.as_ref() {
@@ -2035,7 +2069,7 @@ mod tests {
             .with_workspace_dir(workspace.clone());
 
         let prompt = tool
-            .build_enriched_system_prompt(&config, &tools, &workspace)
+            .build_enriched_system_prompt(&config, &tools, &workspace, "test_agent")
             .unwrap();
 
         assert!(prompt.contains("## Tools"), "should contain tools section");
@@ -2106,7 +2140,7 @@ mod tests {
             .with_workspace_dir(workspace.to_path_buf());
 
         let prompt = tool
-            .build_enriched_system_prompt(&config, &tools, &workspace)
+            .build_enriched_system_prompt(&config, &tools, &workspace, "test_agent")
             .unwrap();
 
         assert!(
@@ -2185,7 +2219,7 @@ mod tests {
             .with_workspace_dir(workspace.to_path_buf());
 
         let prompt = tool
-            .build_enriched_system_prompt(&config, &tools, &workspace)
+            .build_enriched_system_prompt(&config, &tools, &workspace, "test_agent")
             .unwrap();
 
         assert!(
@@ -2443,7 +2477,7 @@ mod tests {
             .with_workspace_dir(workspace.clone());
 
         let prompt = tool
-            .build_enriched_system_prompt(&config, &tools, &workspace)
+            .build_enriched_system_prompt(&config, &tools, &workspace, "test_agent")
             .unwrap();
 
         assert!(
@@ -2490,7 +2524,7 @@ mod tests {
             .with_workspace_dir(workspace.clone());
 
         let prompt = tool
-            .build_enriched_system_prompt(&config, &tools, &workspace)
+            .build_enriched_system_prompt(&config, &tools, &workspace, "test_agent")
             .unwrap();
 
         assert!(
