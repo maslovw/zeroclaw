@@ -5195,7 +5195,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
             "Initializing MCP client — {} server(s) configured",
             config.mcp.servers.len()
         );
-        match crate::tools::McpRegistry::connect_all(&config.mcp.servers).await {
+        match crate::tools::McpRegistry::connect_all(&config.mcp.servers, config.mcp.idle_timeout_secs).await {
             Ok(registry) => {
                 let registry = std::sync::Arc::new(registry);
                 if config.mcp.deferred_loading {
@@ -5241,6 +5241,13 @@ pub async fn start_channels(config: Config) -> Result<()> {
                         registered,
                         registry.server_count()
                     );
+
+                    // Lazy mode: disconnect all servers after tool discovery,
+                    // they will reconnect on-demand when a tool is called.
+                    if registry.is_lazy() {
+                        registry.disconnect_all().await;
+                        registry.spawn_idle_reaper();
+                    }
                 }
             }
             Err(e) => {

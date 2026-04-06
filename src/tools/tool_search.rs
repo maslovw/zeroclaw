@@ -199,7 +199,7 @@ mod tests {
     use crate::tools::mcp_protocol::McpToolDef;
 
     async fn make_deferred_set(stubs: Vec<DeferredMcpToolStub>) -> DeferredMcpToolSet {
-        let registry = Arc::new(McpRegistry::connect_all(&[]).await.unwrap());
+        let registry = Arc::new(McpRegistry::connect_all(&[], 0).await.unwrap());
         DeferredMcpToolSet { stubs, registry }
     }
 

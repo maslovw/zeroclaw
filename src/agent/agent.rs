@@ -428,7 +428,7 @@ impl Agent {
                 "Initializing MCP client — {} server(s) configured",
                 config.mcp.servers.len()
             );
-            match tools::McpRegistry::connect_all(&config.mcp.servers).await {
+            match tools::McpRegistry::connect_all(&config.mcp.servers, config.mcp.idle_timeout_secs).await {
                 Ok(registry) => {
                     let registry = std::sync::Arc::new(registry);
                     if config.mcp.deferred_loading {

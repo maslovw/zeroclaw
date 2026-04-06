@@ -94,7 +94,7 @@ mod tests {
 
     async fn empty_registry() -> Arc<McpRegistry> {
         Arc::new(
-            McpRegistry::connect_all(&[])
+            McpRegistry::connect_all(&[], 0)
                 .await
                 .expect("empty connect_all should succeed"),
         )
