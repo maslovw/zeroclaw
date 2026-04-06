@@ -3596,6 +3596,11 @@ pub async fn run(
                         deferred_set,
                         activated,
                     )));
+
+                    if registry.is_lazy() {
+                        registry.disconnect_all().await;
+                        registry.spawn_idle_reaper();
+                    }
                 } else {
                     // Eager path: register all MCP tools directly
                     let names = registry.tool_names();
@@ -4544,6 +4549,11 @@ pub async fn process_message(
                         deferred_set,
                         activated,
                     )));
+
+                    if registry.is_lazy() {
+                        registry.disconnect_all().await;
+                        registry.spawn_idle_reaper();
+                    }
                 } else {
                     let names = registry.tool_names();
                     let mut registered = 0usize;

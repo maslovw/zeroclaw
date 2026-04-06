@@ -495,6 +495,12 @@ pub async fn run_gateway(
                         deferred_set,
                         activated,
                     )));
+
+                    // Lazy mode: disconnect after tool discovery (deferred path).
+                    if registry.is_lazy() {
+                        registry.disconnect_all().await;
+                        registry.spawn_idle_reaper();
+                    }
                 } else {
                     let names = registry.tool_names();
                     let mut registered = 0usize;
