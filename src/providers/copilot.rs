@@ -603,10 +603,10 @@ impl CopilotProvider {
             let body = response.text().await.unwrap_or_default();
             let sanitized = super::sanitize_api_error(&body);
 
-            if status.as_u16() == 401 || status.as_u16() == 403 {
-                let access_token_path = self.token_dir.join("access-token");
-                tokio::fs::remove_file(&access_token_path).await.ok();
-            }
+            // Log the failure but do NOT delete the access-token file.
+            // The GitHub OAuth token is long-lived and valid; deleting it
+            // forces an unnecessary device-code re-auth on transient failures
+            // (rate limits, network blips, Copilot service issues).
 
             anyhow::bail!(
                 "Failed to get Copilot API key ({status}): {sanitized}. \
