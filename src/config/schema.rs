@@ -5193,12 +5193,27 @@ impl Default for HooksConfig {
 pub struct BuiltinHooksConfig {
     /// Enable the command-logger hook (logs tool calls for auditing).
     pub command_logger: bool,
+    /// Enable the tool-audit hook (logs before/after tool calls with args/results).
+    /// Optionally writes JSONL to the specified log file.
+    #[serde(default)]
+    pub tool_audit: ToolAuditConfig,
     /// Configuration for the webhook-audit hook.
     ///
     /// When enabled, POSTs a JSON payload to `url` for every tool invocation
     /// that matches one of `tool_patterns`.
     #[serde(default)]
     pub webhook_audit: WebhookAuditConfig,
+}
+
+/// Configuration for the tool-audit builtin hook.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct ToolAuditConfig {
+    /// Enable the tool-audit hook.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Optional file path for JSONL audit log output.
+    #[serde(default)]
+    pub log_file: Option<String>,
 }
 
 /// Configuration for the webhook-audit builtin hook.
