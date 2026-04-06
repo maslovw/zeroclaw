@@ -4328,7 +4328,8 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 .with_streaming(tg.stream_mode, tg.draft_update_interval_ms)
                 .with_transcription(config.transcription.clone())
                 .with_tts(config.tts.clone())
-                .with_workspace_dir(config.workspace_dir.clone()),
+                .with_workspace_dir(config.workspace_dir.clone())
+                .with_slash_commands(tg.slash_commands.clone()),
             ))
         }
         "discord" => {
@@ -4536,7 +4537,8 @@ fn collect_configured_channels(
                 .with_transcription(config.transcription.clone())
                 .with_tts(config.tts.clone())
                 .with_workspace_dir(config.workspace_dir.clone())
-                .with_proxy_url(tg.proxy_url.clone()),
+                .with_proxy_url(tg.proxy_url.clone())
+                .with_slash_commands(tg.slash_commands.clone()),
             ),
         });
     }
@@ -11364,6 +11366,7 @@ This is an example JSON object for profile settings."#;
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
+            slash_commands: crate::config::SlashCommandsConfig::default(),
         });
         match build_channel_by_id(&config, "telegram") {
             Ok(channel) => assert_eq!(channel.name(), "telegram"),

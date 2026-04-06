@@ -26,7 +26,7 @@ pub use schema::{
     ReliabilityConfig, ResourceLimitsConfig, RuntimeConfig, SandboxBackend, SandboxConfig,
     SchedulerConfig, SearchMode, SecretsConfig, SecurityConfig, SecurityOpsConfig, ShellToolConfig,
     SkillCreationConfig, SkillImprovementConfig, SkillsConfig, SkillsPromptInjectionMode,
-    SlackConfig, SopConfig, StorageConfig, StorageProviderConfig, StorageProviderSection,
+    SlackConfig, SlashCommandsConfig, SopConfig, StorageConfig, StorageProviderConfig, StorageProviderSection,
     StreamMode, SwarmConfig, SwarmStrategy, TelegramConfig, TextBrowserConfig, ToolFilterGroup,
     ToolFilterGroupMode, TranscriptionConfig, TtsConfig, TunnelConfig, VerifiableIntentConfig,
     WebFetchConfig, WebSearchConfig, WebhookConfig, WhatsAppChatPolicy, WhatsAppWebMode,
@@ -64,6 +64,7 @@ mod tests {
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
+            slash_commands: SlashCommandsConfig::default(),
         };
 
         let discord = DiscordConfig {

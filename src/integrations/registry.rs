@@ -774,7 +774,7 @@ pub fn all_integrations() -> Vec<IntegrationEntry> {
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::config::schema::{IMessageConfig, MatrixConfig, StreamMode, TelegramConfig};
+    use crate::config::schema::{IMessageConfig, MatrixConfig, SlashCommandsConfig, StreamMode, TelegramConfig};
 
     #[test]
     fn registry_has_entries() {
@@ -842,6 +842,7 @@ mod tests {
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
+            slash_commands: SlashCommandsConfig::default(),
         });
         let entries = all_integrations();
         let tg = entries.iter().find(|e| e.name == "Telegram").unwrap();

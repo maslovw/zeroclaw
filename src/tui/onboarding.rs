@@ -18,7 +18,7 @@ use crate::config::Config;
 use crate::config::schema::{
     DiscordConfig, FeishuConfig, IMessageConfig, IrcConfig, LarkConfig, LarkReceiveMode,
     MatrixConfig, MattermostConfig, NextcloudTalkConfig, SignalConfig, SlackConfig, StreamMode,
-    TelegramConfig, WhatsAppChatPolicy, WhatsAppConfig, WhatsAppWebMode,
+    SlashCommandsConfig, TelegramConfig, WhatsAppChatPolicy, WhatsAppConfig, WhatsAppWebMode,
 };
 
 use super::theme;
@@ -731,6 +731,7 @@ fn apply_tui_selections_to_config(app: &App, config: &mut Config) {
                     mention_only: false,
                     ack_reactions: None,
                     proxy_url: None,
+                    slash_commands: SlashCommandsConfig::default(),
                 });
             }
         }
@@ -3393,6 +3394,7 @@ mod tests {
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
+            slash_commands: SlashCommandsConfig::default(),
         });
         apply_tui_selections_to_config(&app, &mut config);
         let tg = config.channels_config.telegram.as_ref().unwrap();

@@ -340,6 +340,7 @@ pub struct TelegramChannel {
         Arc<std::sync::Mutex<std::collections::HashMap<String, (String, std::time::Instant)>>>,
     /// Per-channel proxy URL override.
     proxy_url: Option<String>,
+    slash_commands: crate::config::SlashCommandsConfig,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -384,7 +385,14 @@ impl TelegramChannel {
             voice_chats: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             pending_voice: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             proxy_url: None,
+            slash_commands: crate::config::SlashCommandsConfig::default(),
         }
+    }
+
+    /// Configure slash command settings (e.g. /shell timeout, output flags).
+    pub fn with_slash_commands(mut self, config: crate::config::SlashCommandsConfig) -> Self {
+        self.slash_commands = config;
+        self
     }
 
     /// Configure whether Telegram-native acknowledgement reactions are sent.
@@ -2276,6 +2284,57 @@ impl TelegramChannel {
         self.send_media_by_url("sendVoice", "voice", chat_id, thread_id, url, caption)
             .await
     }
+
+    /// Execute a raw shell command and send the output back to the chat.
+    /// Only reachable by authorized users (parse_update_message gates access).
+    async fn handle_shell_command(&self, command: &str, reply_target: &str) {
+        use tokio::process::Command;
+
+        let timeout = std::time::Duration::from_secs(self.slash_commands.timeout_secs);
+
+        let result = tokio::time::timeout(
+            timeout,
+            Command::new("sh").arg("-c").arg(command).output(),
+        )
+        .await;
+
+        let (chat_id, thread_id) = Self::parse_reply_target(reply_target);
+
+        let response = match result {
+            Ok(Ok(output)) => {
+                let mut parts = Vec::new();
+                if self.slash_commands.return_code {
+                    parts.push(format!(
+                        "exit: {}",
+                        output.status.code().unwrap_or(-1)
+                    ));
+                }
+                if self.slash_commands.stdout {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    if !stdout.trim().is_empty() {
+                        parts.push(format!("STDOUT:\n{}", stdout.trim_end()));
+                    }
+                }
+                if self.slash_commands.stderr {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    if !stderr.trim().is_empty() {
+                        parts.push(format!("STDERR:\n{}", stderr.trim_end()));
+                    }
+                }
+                if parts.is_empty() {
+                    "done".to_string()
+                } else {
+                    parts.join("\n")
+                }
+            }
+            Ok(Err(e)) => format!("error: {e}"),
+            Err(_) => format!("timeout after {}s", self.slash_commands.timeout_secs),
+        };
+
+        let _ = self
+            .send_text_chunks(&response, &chat_id, thread_id.as_deref())
+            .await;
+    }
 }
 
 #[async_trait]
@@ -2857,6 +2916,29 @@ Ensure only one `zeroclaw` process is using this bot token."
                     // Advance offset past this update
                     if let Some(uid) = update.get("update_id").and_then(serde_json::Value::as_i64) {
                         offset = uid + 1;
+                    }
+
+                    // Intercept /shell before agent loop — check raw text
+                    // (m.content may have reply-context quotes prepended).
+                    if let Some(raw_text) = update
+                        .get("message")
+                        .and_then(|msg| msg.get("text"))
+                        .and_then(serde_json::Value::as_str)
+                    {
+                        let shell_cmd = raw_text
+                            .strip_prefix("/shell ")
+                            .or_else(|| {
+                                raw_text.strip_prefix("/shell@").and_then(|rest| {
+                                    rest.split_once(' ').map(|(_, c)| c)
+                                })
+                            });
+                        if let Some(cmd) = shell_cmd {
+                            if let Some(m) = self.parse_update_message(update) {
+                                self.handle_shell_command(cmd.trim(), &m.reply_target)
+                                    .await;
+                                continue;
+                            }
+                        }
                     }
 
                     let msg = if let Some(m) = self.parse_update_message(update) {

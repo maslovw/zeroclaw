@@ -991,6 +991,7 @@ mod tests {
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
+            slash_commands: crate::config::SlashCommandsConfig::default(),
         });
         assert!(has_supervised_channels(&config));
     }
@@ -1116,6 +1117,7 @@ mod tests {
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
+            slash_commands: crate::config::SlashCommandsConfig::default(),
         });
 
         let target = resolve_heartbeat_delivery(&config).unwrap();
@@ -1134,6 +1136,7 @@ mod tests {
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
+            slash_commands: crate::config::SlashCommandsConfig::default(),
         });
 
         let target = resolve_heartbeat_delivery(&config).unwrap();

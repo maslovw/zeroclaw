@@ -6400,6 +6400,38 @@ fn default_matrix_draft_update_interval_ms() -> u64 {
     1500
 }
 
+/// Slash command settings for channels that support them (e.g. /shell).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SlashCommandsConfig {
+    /// Shell command timeout in seconds. Default: 30.
+    #[serde(default = "default_slash_timeout_secs")]
+    pub timeout_secs: u64,
+    /// Include stdout in response. Default: true.
+    #[serde(default = "default_true")]
+    pub stdout: bool,
+    /// Include stderr in response. Default: true.
+    #[serde(default = "default_true")]
+    pub stderr: bool,
+    /// Include exit code in response. Default: true.
+    #[serde(default = "default_true")]
+    pub return_code: bool,
+}
+
+impl Default for SlashCommandsConfig {
+    fn default() -> Self {
+        Self {
+            timeout_secs: default_slash_timeout_secs(),
+            stdout: true,
+            stderr: true,
+            return_code: true,
+        }
+    }
+}
+
+fn default_slash_timeout_secs() -> u64 {
+    30
+}
+
 /// Telegram bot channel configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TelegramConfig {
@@ -6430,6 +6462,9 @@ pub struct TelegramConfig {
     /// Overrides the global `[proxy]` setting for this channel only.
     #[serde(default)]
     pub proxy_url: Option<String>,
+    /// Slash command settings (e.g. /shell).
+    #[serde(default)]
+    pub slash_commands: SlashCommandsConfig,
 }
 
 impl ChannelConfig for TelegramConfig {
@@ -11535,6 +11570,7 @@ auto_save = true
                     mention_only: false,
                     ack_reactions: None,
                     proxy_url: None,
+                    slash_commands: SlashCommandsConfig::default(),
                 }),
                 discord: None,
                 discord_history: None,
@@ -12350,6 +12386,7 @@ default_temperature = 0.7
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
+            slash_commands: SlashCommandsConfig::default(),
         };
         let json = serde_json::to_string(&tc).unwrap();
         let parsed: TelegramConfig = serde_json::from_str(&json).unwrap();
@@ -15228,6 +15265,7 @@ require_otp_to_resume = true
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
+            slash_commands: SlashCommandsConfig::default(),
         });
 
         // Save (triggers encryption)
