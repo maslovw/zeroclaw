@@ -454,7 +454,7 @@ impl Tool for DelegateTool {
         let provider_credential = provider_credential_owned.as_ref().map(String::as_str);
 
         let provider: Box<dyn Provider> = match providers::create_resilient_provider_with_options(
-            &agent_config.provider,
+            agent_config.provider_or("unknown"),
             provider_credential,
             None,
             &self.reliability_config,
@@ -464,7 +464,7 @@ impl Tool for DelegateTool {
             Err(e) => {
                 let error_message = format!(
                     "Failed to create provider '{}' for agent '{agent_name}': {e}",
-                    agent_config.provider
+                    agent_config.provider_or("unknown")
                 );
                 self.finish_coordination_trace(
                     agent_name,
@@ -542,7 +542,7 @@ impl Tool for DelegateTool {
             provider.chat_with_system(
                 effective_system_prompt.as_deref(),
                 &full_prompt,
-                &agent_config.model,
+                agent_config.model_or("unknown"),
                 temperature,
             ),
         )
@@ -576,8 +576,8 @@ impl Tool for DelegateTool {
                 }
                 let output = format!(
                     "[Agent '{agent_name}' ({provider}/{model})]\n{rendered}",
-                    provider = agent_config.provider,
-                    model = agent_config.model
+                    provider = agent_config.provider_or("unknown"),
+                    model = agent_config.model_or("unknown")
                 );
                 self.finish_coordination_trace(agent_name, &coordination_trace, true, &output);
                 load_lease.mark_success();
@@ -668,8 +668,8 @@ impl DelegateTool {
                 &mut history,
                 &sub_tools,
                 &noop_observer,
-                &agent_config.provider,
-                &agent_config.model,
+                agent_config.provider_or("unknown"),
+                agent_config.model_or("unknown"),
                 temperature,
                 true,
                 None,
@@ -696,8 +696,8 @@ impl DelegateTool {
                     success: true,
                     output: format!(
                         "[Agent '{agent_name}' ({provider}/{model}, agentic)]\n{rendered}",
-                        provider = agent_config.provider,
-                        model = agent_config.model
+                        provider = agent_config.provider_or("unknown"),
+                        model = agent_config.model_or("unknown")
                     ),
                     error: None,
                 })
@@ -745,8 +745,8 @@ impl DelegateTool {
                 task_id: correlation_id.clone(),
                 summary: text_preview(prompt, COORDINATION_PREVIEW_MAX_CHARS),
                 metadata: json!({
-                    "provider": agent_config.provider,
-                    "model": agent_config.model,
+                    "provider": agent_config.provider_or("unknown"),
+                    "model": agent_config.model_or("unknown"),
                     "agentic": agent_config.agentic,
                     "max_depth": agent_config.max_depth,
                     "max_iterations": agent_config.max_iterations,
@@ -961,8 +961,8 @@ mod tests {
         agents.insert(
             "researcher".to_string(),
             DelegateAgentConfig {
-                provider: "ollama".to_string(),
-                model: "llama3".to_string(),
+                provider: Some("ollama".to_string()),
+                model: Some("llama3".to_string()),
                 system_prompt: Some("You are a research assistant.".to_string()),
                 api_key: None,
                 enabled: true,
@@ -978,8 +978,8 @@ mod tests {
         agents.insert(
             "coder".to_string(),
             DelegateAgentConfig {
-                provider: "openrouter".to_string(),
-                model: crate::config::DEFAULT_MODEL_FALLBACK.to_string(),
+                provider: Some("openrouter".to_string()),
+                model: Some(crate::config::DEFAULT_MODEL_FALLBACK.to_string()),
                 system_prompt: None,
                 api_key: Some("delegate-test-credential".to_string()),
                 enabled: true,
@@ -1173,8 +1173,8 @@ max_concurrent = {subagents_max_concurrent}
 
     fn agentic_config(allowed_tools: Vec<String>, max_iterations: usize) -> DelegateAgentConfig {
         DelegateAgentConfig {
-            provider: "openrouter".to_string(),
-            model: "model-test".to_string(),
+            provider: Some("openrouter".to_string()),
+            model: Some("model-test".to_string()),
             system_prompt: Some("You are agentic.".to_string()),
             api_key: Some("delegate-test-credential".to_string()),
             enabled: true,
@@ -1283,8 +1283,8 @@ max_concurrent = {subagents_max_concurrent}
         agents.insert(
             "broken".to_string(),
             DelegateAgentConfig {
-                provider: "totally-invalid-provider".to_string(),
-                model: "model".to_string(),
+                provider: Some("totally-invalid-provider".to_string()),
+                model: Some("model".to_string()),
                 system_prompt: None,
                 api_key: None,
                 enabled: true,
@@ -1393,8 +1393,8 @@ max_concurrent = {subagents_max_concurrent}
         agents.insert(
             "researcher".to_string(),
             DelegateAgentConfig {
-                provider: "invalid-provider-for-hot-reload-test".to_string(),
-                model: "model".to_string(),
+                provider: Some("invalid-provider-for-hot-reload-test".to_string()),
+                model: Some("model".to_string()),
                 system_prompt: None,
                 api_key: None,
                 enabled: true,
@@ -1474,8 +1474,8 @@ max_concurrent = {subagents_max_concurrent}
         agents.insert(
             "tester".to_string(),
             DelegateAgentConfig {
-                provider: "invalid-for-test".to_string(),
-                model: "test-model".to_string(),
+                provider: Some("invalid-for-test".to_string()),
+                model: Some("test-model".to_string()),
                 system_prompt: None,
                 api_key: None,
                 enabled: true,
@@ -1512,8 +1512,8 @@ max_concurrent = {subagents_max_concurrent}
         agents.insert(
             "tester".to_string(),
             DelegateAgentConfig {
-                provider: "invalid-for-test".to_string(),
-                model: "test-model".to_string(),
+                provider: Some("invalid-for-test".to_string()),
+                model: Some("test-model".to_string()),
                 system_prompt: None,
                 api_key: None,
                 enabled: true,
@@ -1698,8 +1698,8 @@ max_concurrent = {subagents_max_concurrent}
         agents.insert(
             "broken".to_string(),
             DelegateAgentConfig {
-                provider: "totally-invalid-provider".to_string(),
-                model: "model".to_string(),
+                provider: Some("totally-invalid-provider".to_string()),
+                model: Some("model".to_string()),
                 system_prompt: None,
                 api_key: None,
                 enabled: true,
@@ -1770,8 +1770,8 @@ max_concurrent = {subagents_max_concurrent}
         agents.insert(
             "tester".to_string(),
             DelegateAgentConfig {
-                provider: "openrouter".to_string(),
-                model: "model-test".to_string(),
+                provider: Some("openrouter".to_string()),
+                model: Some("model-test".to_string()),
                 system_prompt: None,
                 api_key: Some("delegate-test-credential".to_string()),
                 enabled: true,

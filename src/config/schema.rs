@@ -462,10 +462,13 @@ pub struct ProviderConfig {
 /// Configuration for a delegate sub-agent used by the `delegate` tool.
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DelegateAgentConfig {
-    /// Provider name (e.g. "ollama", "openrouter", "anthropic")
-    pub provider: String,
-    /// Model name
-    pub model: String,
+    /// Provider name (e.g. "ollama", "openrouter", "anthropic").
+    /// Falls back to `default_provider` when omitted.
+    #[serde(default)]
+    pub provider: Option<String>,
+    /// Model name. Falls back to `default_model` when omitted.
+    #[serde(default)]
+    pub model: Option<String>,
     /// Optional system prompt for the sub-agent
     #[serde(default)]
     pub system_prompt: Option<String>,
@@ -496,6 +499,18 @@ pub struct DelegateAgentConfig {
     /// Maximum tool-call iterations in agentic mode.
     #[serde(default = "default_max_tool_iterations")]
     pub max_iterations: usize,
+}
+
+impl DelegateAgentConfig {
+    /// Resolved provider name, falling back to the given default.
+    pub fn provider_or<'a>(&'a self, default: &'a str) -> &'a str {
+        self.provider.as_deref().unwrap_or(default)
+    }
+
+    /// Resolved model name, falling back to the given default.
+    pub fn model_or<'a>(&'a self, default: &'a str) -> &'a str {
+        self.model.as_deref().unwrap_or(default)
+    }
 }
 
 fn default_max_depth() -> u32 {
@@ -10003,8 +10018,8 @@ mod tests {
         config.agents.insert(
             "worker".into(),
             DelegateAgentConfig {
-                provider: "openrouter".into(),
-                model: "model-test".into(),
+                provider: Some("openrouter".into()),
+                model: Some("model-test".into()),
                 system_prompt: None,
                 api_key: Some("agent-credential".into()),
                 enabled: true,
@@ -11018,8 +11033,8 @@ denied_tools = ["shell"]
         config.agents.insert(
             "worker".into(),
             DelegateAgentConfig {
-                provider: "openrouter".into(),
-                model: "model-test".into(),
+                provider: Some("openrouter".into()),
+                model: Some("model-test".into()),
                 system_prompt: None,
                 api_key: Some("agent-credential".into()),
                 enabled: true,

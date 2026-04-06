@@ -246,9 +246,9 @@ fn selection_score(
     let mut metadata = String::new();
     metadata.push_str(name);
     metadata.push(' ');
-    metadata.push_str(&agent.provider);
+    metadata.push_str(agent.provider_or("unknown"));
     metadata.push(' ');
-    metadata.push_str(&agent.model);
+    metadata.push_str(agent.model_or("unknown"));
     metadata.push(' ');
     metadata.push_str(&agent.capabilities.join(" "));
     metadata.push(' ');
@@ -262,8 +262,8 @@ fn selection_score(
     let capability_overlap = query_tokens.intersection(&capabilities_tokens).count();
 
     let name_lc = name.to_ascii_lowercase();
-    let provider_lc = agent.provider.to_ascii_lowercase();
-    let model_lc = agent.model.to_ascii_lowercase();
+    let provider_lc = agent.provider_or("unknown").to_ascii_lowercase();
+    let model_lc = agent.model_or("unknown").to_ascii_lowercase();
 
     SelectionScore {
         name_match: !name_lc.is_empty() && query_lc.contains(&name_lc),
@@ -292,8 +292,8 @@ mod tests {
         agents.insert(
             "researcher".to_string(),
             DelegateAgentConfig {
-                provider: "openrouter".to_string(),
-                model: "claude-sonnet".to_string(),
+                provider: Some("openrouter".to_string()),
+                model: Some("claude-sonnet".to_string()),
                 system_prompt: Some("Research and summarize technical docs.".to_string()),
                 api_key: None,
                 enabled: true,
@@ -309,8 +309,8 @@ mod tests {
         agents.insert(
             "coder".to_string(),
             DelegateAgentConfig {
-                provider: "openai".to_string(),
-                model: "gpt-5.3-codex".to_string(),
+                provider: Some("openai".to_string()),
+                model: Some("gpt-5.3-codex".to_string()),
                 system_prompt: Some("Write and refactor production code.".to_string()),
                 api_key: None,
                 enabled: true,

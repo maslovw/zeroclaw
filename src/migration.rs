@@ -599,14 +599,18 @@ fn merge_delegate_agent(
 ) -> bool {
     let mut changed = false;
 
-    if target.provider.trim().is_empty() && !source.provider.trim().is_empty() {
+    let target_provider_empty = target.provider.as_deref().map_or(true, |s| s.trim().is_empty());
+    let source_provider_empty = source.provider.as_deref().map_or(true, |s| s.trim().is_empty());
+    if target_provider_empty && !source_provider_empty {
         target.provider = source.provider.clone();
         changed = true;
     } else if target.provider != source.provider {
         stats.merge_conflicts_preserved += 1;
     }
 
-    if target.model.trim().is_empty() && !source.model.trim().is_empty() {
+    let target_model_empty = target.model.as_deref().map_or(true, |s| s.trim().is_empty());
+    let source_model_empty = source.model.as_deref().map_or(true, |s| s.trim().is_empty());
+    if target_model_empty && !source_model_empty {
         target.model = source.model.clone();
         changed = true;
     } else if target.model != source.model {
@@ -847,8 +851,8 @@ fn parse_source_agent(raw_agent: &Value) -> Option<DelegateAgentConfig> {
         .unwrap_or_default();
 
     Some(DelegateAgentConfig {
-        provider: provider.unwrap_or_else(|| "openrouter".to_string()),
-        model,
+        provider: Some(provider.unwrap_or_else(|| "openrouter".to_string())),
+        model: Some(model),
         system_prompt: find_string(obj, &["system_prompt", "systemPrompt"]),
         api_key: find_string(obj, &["api_key", "apiKey"]),
         enabled: find_bool(obj, &["enabled"]).unwrap_or(true),
@@ -1486,8 +1490,8 @@ mod tests {
         config.agents.insert(
             "researcher".to_string(),
             DelegateAgentConfig {
-                provider: "openrouter".to_string(),
-                model: "existing-model".to_string(),
+                provider: Some("openrouter".to_string()),
+                model: Some("existing-model".to_string()),
                 system_prompt: Some("existing prompt".to_string()),
                 api_key: None,
                 enabled: true,
@@ -1566,7 +1570,7 @@ mod tests {
         assert!(telegram.allowed_users.contains(&"u2".to_string()));
 
         let researcher = merged.agents.get("researcher").unwrap();
-        assert_eq!(researcher.model, "existing-model");
+        assert_eq!(researcher.model.as_deref(), Some("existing-model"));
         assert!(researcher.allowed_tools.contains(&"shell".to_string()));
         assert!(researcher.allowed_tools.contains(&"file_read".to_string()));
         assert!(merged.agents.contains_key("helper"));

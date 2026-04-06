@@ -296,7 +296,7 @@ impl Tool for SubAgentSpawnTool {
         let provider_credential = provider_credential_owned.as_ref().map(String::as_str);
 
         let provider: Box<dyn Provider> = match providers::create_resilient_provider_with_options(
-            &agent_config.provider,
+            agent_config.provider_or("unknown"),
             provider_credential,
             None,
             &self.reliability_config,
@@ -310,7 +310,7 @@ impl Tool for SubAgentSpawnTool {
                     output: String::new(),
                     error: Some(format!(
                         "Failed to create provider '{}' for agent '{agent_name}': {e}",
-                        agent_config.provider
+                        agent_config.provider_or("unknown")
                     )),
                 });
             }
@@ -456,7 +456,7 @@ async fn run_simple_background(
         provider.chat_with_system(
             effective_system_prompt,
             full_prompt,
-            &agent_config.model,
+            agent_config.model_or("unknown"),
             temperature,
         ),
     )
@@ -487,8 +487,8 @@ async fn run_simple_background(
                 success: true,
                 output: format!(
                     "[Agent '{agent_name}' ({provider}/{model})]\n{rendered}",
-                    provider = agent_config.provider,
-                    model = agent_config.model
+                    provider = agent_config.provider_or("unknown"),
+                    model = agent_config.model_or("unknown")
                 ),
                 error: None,
             })
@@ -607,8 +607,8 @@ async fn run_agentic_background(
             &mut history,
             &sub_tools,
             &noop_observer,
-            &agent_config.provider,
-            &agent_config.model,
+            agent_config.provider_or("unknown"),
+            agent_config.model_or("unknown"),
             temperature,
             true,
             None,
@@ -635,8 +635,8 @@ async fn run_agentic_background(
                 success: true,
                 output: format!(
                     "[Agent '{agent_name}' ({provider}/{model}, agentic)]\n{rendered}",
-                    provider = agent_config.provider,
-                    model = agent_config.model
+                    provider = agent_config.provider_or("unknown"),
+                    model = agent_config.model_or("unknown")
                 ),
                 error: None,
             })
@@ -671,8 +671,8 @@ mod tests {
         agents.insert(
             "researcher".to_string(),
             DelegateAgentConfig {
-                provider: "ollama".to_string(),
-                model: "llama3".to_string(),
+                provider: Some("ollama".to_string()),
+                model: Some("llama3".to_string()),
                 system_prompt: Some("You are a research assistant.".to_string()),
                 api_key: None,
                 enabled: true,

@@ -335,11 +335,11 @@ impl ModelRoutingConfigTool {
             agents.insert(
                 name.clone(),
                 json!({
-                    "provider": agent.provider,
-                    "model": agent.model,
+                    "provider": agent.provider_or("unknown"),
+                    "model": agent.model_or("unknown"),
                     "system_prompt": agent.system_prompt,
                     "api_key_configured": has_provider_credential(
-                        &agent.provider,
+                        agent.provider_or("unknown"),
                         agent.api_key.as_deref()
                     ),
                     "enabled": agent.enabled,
@@ -962,8 +962,8 @@ impl ModelRoutingConfigTool {
             .get(&name)
             .cloned()
             .unwrap_or(DelegateAgentConfig {
-                provider: provider.clone(),
-                model: model.clone(),
+                provider: Some(provider.clone()),
+                model: Some(model.clone()),
                 system_prompt: None,
                 api_key: None,
                 enabled: true,
@@ -976,8 +976,8 @@ impl ModelRoutingConfigTool {
                 max_iterations: DEFAULT_AGENT_MAX_ITERATIONS,
             });
 
-        next_agent.provider = provider;
-        next_agent.model = model;
+        next_agent.provider = Some(provider);
+        next_agent.model = Some(model);
 
         match system_prompt_update {
             MaybeSet::Set(value) => next_agent.system_prompt = Some(value),
